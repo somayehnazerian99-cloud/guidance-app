@@ -1,0 +1,308 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  username      String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  // NOT @unique: a unique index on a nullable field in MongoDB treats every
+  // missing value as null, so only one account could ever exist without an
+  // email. Uniqueness for non-empty emails is enforced in the API layer.
+  email         String?
+  role          String    @default("STUDENT") // ADMIN, COUNSELOR, STUDENT
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  studentProfile   StudentProfile?  @relation("UserStudentProfile")
+  counselorProfile CounselorProfile? @relation("UserCounselorProfile")
+  sessions         Session[]        @relation("UserSessions")
+  auditLogs        AuditLog[]       @relation("UserAuditLogs")
+  assignedStudents StudentProfile[] @relation("CounselorStudents")
+  assignedClasses  Class[]          @relation("CounselorClasses")
+
+  @@index([role])
+  @@index([email])
+}
+
+model Session {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  token     String   @unique
+  userId    String   @db.ObjectId
+  user      User     @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model School {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  city      String?
+  province  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes  Class[]          @relation("SchoolClasses")
+  students StudentProfile[] @relation("SchoolStudents")
+}
+
+model Class {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  grade       Int      // 7, 8, 9
+  schoolYear  String   // e.g. "1402-1403"
+  schoolId    String   @db.ObjectId
+  school      School   @relation("SchoolClasses", fields: [schoolId], references: [id])
+  counselorId String?  @db.ObjectId
+  counselor   User?    @relation("CounselorClasses", fields: [counselorId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  students StudentProfile[] @relation("ClassStudents")
+
+  @@index([schoolId])
+  @@index([grade])
+}
+
+model StudentProfile {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String   @unique @db.ObjectId
+  user            User     @relation("UserStudentProfile", fields: [userId], references: [id])
+  studentCode     String   @unique
+  schoolId        String?  @db.ObjectId
+  school          School?  @relation("SchoolStudents", fields: [schoolId], references: [id])
+  classId         String?  @db.ObjectId
+  class           Class?   @relation("ClassStudents", fields: [classId], references: [id])
+  counselorId     String?  @db.ObjectId
+  counselor       User?    @relation("CounselorStudents", fields: [counselorId], references: [id])
+  grade           Int      // 7, 8, 9
+  schoolYear      String
+  phone           String?
+  address         String?
+  parentPhone     String?
+  profileComplete Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  grades          Grade[]           @relation("StudentGrades")
+  interests       Interest[]        @relation("StudentInterests")
+  abilities       Ability[]         @relation("StudentAbilities")
+  testAttempts    TestAttempt[]     @relation("StudentAttempts")
+  parentOpinions  ParentOpinion[]   @relation("StudentParentOpinions")
+  guidanceResults GuidanceResult[]  @relation("StudentGuidanceResults")
+  notifications   Notification[]    @relation("StudentNotifications")
+}
+
+model CounselorProfile {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @unique @db.ObjectId
+  user      User     @relation("UserCounselorProfile", fields: [userId], references: [id])
+  expertise String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Grade {
+  id             String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId      String         @db.ObjectId
+  student        StudentProfile @relation("StudentGrades", fields: [studentId], references: [id])
+  subjectName    String
+  score          Float
+  maxScore       Float          @default(20)
+  semester       Int            // 1 or 2
+  academicYear   String         // e.g. "1402-1403"
+  gradeLevel     Int            // 7, 8, 9
+  evaluationType String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+model Interest {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId String         @db.ObjectId
+  student   StudentProfile @relation("StudentInterests", fields: [studentId], references: [id])
+  category  String         // e.g. "MATH", "SCIENCE", "ART", etc.
+  level     Int            @default(1) // 1-5 scale
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+model Ability {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId String         @db.ObjectId
+  student   StudentProfile @relation("StudentAbilities", fields: [studentId], references: [id])
+  category  String         // e.g. "MATHEMATICAL", "VERBAL", "LOGICAL", etc.
+  score     Float          @default(0) // 0-100
+  level     String         @default("MEDIUM") // LOW, MEDIUM, HIGH, EXCELLENT
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+model GuidanceTest {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  isActive    Boolean  @default(true)
+  createdBy   String?  @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions Question[]    @relation("TestQuestions")
+  attempts  TestAttempt[] @relation("TestAttempts")
+}
+
+model Question {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  testId    String       @db.ObjectId
+  test      GuidanceTest @relation("TestQuestions", fields: [testId], references: [id])
+  text      String
+  order     Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  options Option[] @relation("QuestionOptions")
+
+  @@index([testId])
+}
+
+model Option {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  questionId String   @db.ObjectId
+  question   Question @relation("QuestionOptions", fields: [questionId], references: [id])
+  text       String
+  score      Float    @default(0)
+  order      Int
+  createdAt  DateTime @default(now())
+
+  @@index([questionId])
+}
+
+model TestAttempt {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId   String         @db.ObjectId
+  student     StudentProfile @relation("StudentAttempts", fields: [studentId], references: [id])
+  testId      String         @db.ObjectId
+  test        GuidanceTest   @relation("TestAttempts", fields: [testId], references: [id])
+  totalScore  Float          @default(0)
+  completed   Boolean        @default(false)
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+
+  answers TestAnswer[] @relation("AttemptAnswers")
+
+  @@index([studentId])
+  @@index([testId])
+}
+
+model TestAnswer {
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  attemptId  String      @db.ObjectId
+  attempt    TestAttempt @relation("AttemptAnswers", fields: [attemptId], references: [id])
+  questionId String      @db.ObjectId
+  optionId   String      @db.ObjectId
+  score      Float       @default(0)
+  createdAt  DateTime    @default(now())
+
+  @@index([attemptId])
+}
+
+model ParentOpinion {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId     String         @db.ObjectId
+  student       StudentProfile @relation("StudentParentOpinions", fields: [studentId], references: [id])
+  parentName    String?
+  interests     String?
+  abilities     String?
+  fieldInterest String?
+  behavioral    String?
+  activities    String?
+  generalNotes  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+model GuidanceResult {
+  id              String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId       String         @db.ObjectId
+  student         StudentProfile @relation("StudentGuidanceResults", fields: [studentId], references: [id])
+  suggestedFields String         // JSON string of suggestions
+  analysis        String?        // JSON string of analysis
+  counselorNote   String?
+  reviewedBy      String?        @db.ObjectId
+  reviewedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+model EducationalVideo {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  thumbnail   String?
+  videoUrl    String
+  category    String?
+  isActive    Boolean  @default(true)
+  createdBy   String?  @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+}
+
+model Notification {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  studentId String         @db.ObjectId
+  student   StudentProfile @relation("StudentNotifications", fields: [studentId], references: [id])
+  title     String
+  message   String
+  isRead    Boolean        @default(false)
+  type      String         @default("INFO") // INFO, WARNING, SUCCESS
+  createdAt DateTime       @default(now())
+
+  @@index([studentId])
+}
+
+model AuditLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String?  @db.ObjectId
+  user      User?    @relation("UserAuditLogs", fields: [userId], references: [id])
+  action    String   // LOGIN, LOGOUT, CREATE_USER, etc.
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
