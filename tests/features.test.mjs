@@ -577,7 +577,14 @@ test("the public ticket shape carries server-computed permissions only", () => {
 
   const adminView = toPublicTicket(ticket, { viewerId: "admin-1", viewerRole: "ADMIN" });
   assert.equal(adminView.canChangeStatus, true);
-  assert.equal(adminView.canReply, false);
+  // The administrator answers tickets: the reply button is part of the support
+  // queue, so the flag must match what PATCH /api/support/tickets/[id] allows.
+  assert.equal(adminView.canReply, true);
+  assert.equal(adminView.canReply, canReplyToTicket(ticket, "ADMIN", false));
+
+  const closedTicket = { ...ticket, status: TICKET_STATUS.CLOSED };
+  assert.equal(toPublicTicket(closedTicket, { viewerRole: "ADMIN" }).canReply, true);
+  assert.equal(toPublicTicket(closedTicket, { viewerId: "owner-1", viewerRole: "STUDENT" }).canReply, false);
   assert.equal(toPublicTicket(null), null);
 });
 

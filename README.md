@@ -283,8 +283,13 @@ guidance-app/
 │                   password-policy audit-log support client-api
 │                   guidance-engine utils
 ├── prisma/         schema.prisma seed.js
-├── scripts/        verify-auth-http.mjs verify-password-reset.mjs
+├── scripts/        verify-auth-http.mjs verify-password-reset.mjs with-mongo.mjs
+│                   e2e.mjs (اجرای E2E روی دیتابیس موقت)
+│                   lib/runtime.mjs (کمک‌کننده‌های مشترک اجرای Build و پردازش)
+├── e2e/            helpers.mjs auth.spec.mjs register.spec.mjs
+│                   support.spec.mjs change-password.spec.mjs
 ├── tests/          security.test.mjs features.test.mjs
+├── playwright.config.mjs
 ├── middleware.js
 └── .github/workflows/ci.yml
 ```
@@ -364,9 +369,12 @@ guidance-app/
   خودکار به `IN_PROGRESS` می‌برد.
 - تیکت هر کاربر فقط برای خودش و مدیر قابل مشاهده است؛ درخواست تیکت دیگران **۴۰۴**
   می‌گیرد (نه ۴۰۳) تا شناسه‌های معتبر قابل حدس زدن نباشند.
-- تیکت بسته‌شده پیام جدید کاربر نمی‌پذیرد؛ تغییر وضعیت فقط برای مدیر مجاز است.
+- تیکت بسته‌شده پیام جدید کاربر نمی‌پذیرد؛ تغییر وضعیت فقط برای مدیر مجاز است. مدیر
+  می‌تواند در هر وضعیتی به گفت‌وگو پاسخ دهد و از همان صفحه، تیکت را باز/در حال بررسی/بسته کند.
 - فلگ‌های `canReply` / `canChangeStatus` در **سرور** محاسبه و به کلاینت داده می‌شوند
-  (`toPublicTicket`)، پس هیچ UI نمی‌تواند مجوزی به خودش بدهد.
+  (`toPublicTicket`) و از همان توابعی می‌آیند که خودِ Endpoint اعمال می‌کند
+  (`canReplyToTicket` / `canChangeTicketStatus` در `lib/support.js`)، بنابراین دکمه‌هایی که
+  کاربر می‌بیند هرگز با آنچه API می‌پذیرد اختلاف ندارند — هیچ UI نمی‌تواند مجوزی به خودش بدهد.
 
 ### لاگ فعالیت‌ها (Audit Log)
 
@@ -448,6 +456,14 @@ guidance-app/
 | فارسی، صفحه‌بندی‌شده و بدون Secret بودن خروجی لاگ فعالیت‌ها | ✅ تست HTTP |
 | جداسازی تیکت‌ها (۴۰۴ برای تیکت دیگران) و فقط-مدیر بودن حذف/تغییر وضعیت | ✅ تست HTTP |
 | جلوگیری از ارسال تکراری با Coalescing درخواست‌های یکسان | ✅ تست خودکار |
+| مسیرهای پنل در مرورگر واقعی (۳۰۷ بدون Session، ریدایرکت بین‌نقشی) | ✅ `npm run test:e2e` |
+| کوکی Session در مرورگر (HttpOnly + `SameSite=Lax` + خارج از دسترس جاوااسکریپت) | ✅ `npm run test:e2e` |
+| بی‌اعتبار شدن کوکی قدیمی پس از Logout (Replay حمله) | ✅ `npm run test:e2e` |
+| رد شدن رمز نادرست و ورود از پنل اشتباه در مرورگر | ✅ `npm run test:e2e` |
+| عدم امکان ثبت‌نام ADMIN از UI و API، و نبود صفحه‌ی `/register/admin` | ✅ `npm run test:e2e` |
+| ورود مشاور معلق ممنوع و فعال‌شدن پس از تأیید مدیر | ✅ `npm run test:e2e` |
+| جداسازی تیکت بین دو دانش‌آموز در سطح مرورگر (۴۰۴) | ✅ `npm run test:e2e` |
+| باطل شدن نشست دستگاه دیگر پس از تغییر رمز | ✅ `npm run test:e2e` |
 
 > **محدودیت شناخته‌شده:** Rate Limit در حافظه‌ی پروسه نگهداری می‌شود؛ در استقرار
 > چند-Instance باید به یک Store مشترک (Redis/Upstash) منتقل شود. رابط تابع
@@ -458,10 +474,49 @@ guidance-app/
 ## ۱۳. تست‌ها
 
 ```bash
-npm test            # ۶۴ تست امنیت/اعتبارسنجی/ثبت‌نام/پشتیبانی/لاگ (بدون نیاز به دیتابیس)
+npm test            # ۶۸ تست امنیت/اعتبارسنجی/ثبت‌نام/پشتیبانی/لاگ (بدون نیاز به دیتابیس)
 npm run verify:auth # Build تولیدی روی یک پورت آزاد + بررسی‌های HTTP (۷۰ بررسی روی دیتابیس متصل)
 npm run verify:live # همان + MongoDB موقت + Seed + ۱۳ بررسی Reset
+npm run test:e2e    # ۲۵ تست انتها‌به‌انتها با Playwright روی MongoDB موقت
 ```
+
+### تست‌های انتها به انتها (Playwright)
+
+`npm run test:e2e` کل استک را موقت و جداگانه بالا می‌آورد: یک **MongoDB موقت
+(تک‌نودی ReplicaSet)**، `prisma db push`، `npm run seed`، Build تولیدی و یک سرور
+Next روی پورت `3100`. سپس ۲۵ سناریو در **مرورگر واقعی** اجرا می‌شود و در پایان
+همه‌چیز (سرور و دیتابیس) متوقف و حذف می‌شود. هیچ داده‌ای به `DATABASE_URL` فایل
+`.env` دست نمی‌زند و هیچ Secret یا دیتابیس واقعی لازم نیست.
+
+| فایل | پوشش |
+|------|------|
+| `e2e/auth.spec.mjs` | مسیرهای محافظت‌شده، ورود سه نقش، رمز نادرست، پنل اشتباه، کوکی HttpOnly، Logout و Replay کوکی |
+| `e2e/register.spec.mjs` | ثبت‌نام دانش‌آموز، پالایش نام کاربری، رمز ضعیف، نام تکراری، نبود ثبت‌نام مدیر، تأیید مشاور توسط مدیر |
+| `e2e/support.spec.mjs` | ثبت تیکت، گفت‌وگو، پاسخ و تغییر وضعیت توسط مدیر، مشاهده‌ی نتیجه توسط دانش‌آموز، عدم دسترسی دانش‌آموز دیگر |
+| `e2e/change-password.spec.mjs` | خطاهای اعتبارسنجی فرم، تغییر رمز موفق، باطل‌شدن نشست دستگاه دیگر، کارکرد رمز جدید و بی‌اعتبار شدن رمز قدیمی |
+
+اجرای فقط بخشی از تست‌ها (آرگومان‌ها به Playwright پاس داده می‌شوند):
+
+```bash
+npm run test:e2e -- --grep "ورود"     # فیلتر بر اساس عنوان
+npm run test:e2e -- e2e/auth.spec.mjs  # فقط یک فایل
+E2E_PORT=3200 npm run test:e2e         # تغییر پورت سرور
+```
+
+**مرورگر:** به‌صورت پیش‌فرض از Chromium خودِ Playwright استفاده می‌شود
+(`npx playwright install chromium`). اگر دانلود آن در شبکه‌ی شما مسدود بود،
+کانفیگ خودکار به Chrome نصب‌شده روی سیستم برمی‌گردد؛ برای انتخاب دستی:
+
+```bash
+npx playwright install chromium
+E2E_BROWSER_CHANNEL=chrome   npm run test:e2e   # Chrome نصب‌شده
+E2E_BROWSER_CHANNEL=msedge   npm run test:e2e   # Edge نصب‌شده
+E2E_BROWSER_CHANNEL=chromium npm run test:e2e   # اجبار به Chromium بسته‌بندی‌شده
+```
+
+> نکته: چون Rate Limit روی `x-forwarded-for` کلید می‌خورد، هر Context تست آدرس
+> مستقل و مستند (بازه‌ی `198.51.100.0/24`) می‌فرستد تا سناریوها روی هم اثر نگذارند —
+> خودِ محدودیت‌ها اما فعال می‌مانند و بخشی از تست‌ها هستند.
 
 `npm run verify:auth` سرور Production را بالا می‌آورد، بررسی‌ها را انجام می‌دهد و
 خودش آن را می‌بندد. اگر دیتابیس `DATABASE_URL` در دسترس باشد، تست‌های زنده‌ی
@@ -470,8 +525,9 @@ npm run verify:live # همان + MongoDB موقت + Seed + ۱۳ بررسی Reset
 همه‌ی این‌ها را با یک MongoDB موقت (بدون نیاز به نصب) اجرا می‌کند و اگر سورس از
 آخرین Build جدیدتر باشد، خودش دوباره Build می‌گیرد تا کد قدیمی تست نشود.
 
-آخرین اجرا روی MongoDB Atlas: `npm test` → ۶۴/۶۴ · `npm run verify:auth` →
-`ALL CHECKS PASSED — 70 passed, 0 skipped` · `npm run verify:password-reset` → ۱۳/۱۳.
+آخرین اجرا: `npm test` → ۶۸/۶۸ · `npm run verify:live` →
+`ALL CHECKS PASSED — 70 passed, 0 skipped` · `npm run verify:password-reset` → ۱۳/۱۳ ·
+`npm run test:e2e` → **۲۵ passed** (Chromium، حدود یک دقیقه).
 اسکریپت بررسی، داده‌های آزمایشی خودش را در پایان پاک می‌کند (کاربران و تیکت‌های تستی).
 
 ---
@@ -500,6 +556,16 @@ Workflow در `.github/workflows/ci.yml`:
 ```
 npm ci → prisma generate → lint → test → build
 ```
+
+و یک Job مستقل برای تست‌های مرورگری که **هیچ Secretی لازم ندارد** (چون دیتابیس
+موقت خودش را می‌سازد):
+
+```
+npm ci → prisma generate → npx playwright install --with-deps chromium → npm run test:e2e
+```
+
+در صورت شکست E2E، گزارش HTML و Screenshot/Trace به‌صورت Artifact با نام
+`playwright-report` آپلود می‌شود (`e2e-report/` و `e2e-artifacts/`).
 
 هیچ Credential در Workflow نوشته نشده است. برای اجرای CI این Secretها را در
 Settings → Secrets and variables → Actions تنظیم کنید:

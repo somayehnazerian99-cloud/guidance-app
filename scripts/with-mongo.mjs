@@ -7,95 +7,18 @@
  *
  * Everything (including the mongod binary) stays inside the project directory,
  * and the server is destroyed on exit — nothing is left running.
+ *
+ * The process/build helpers live in scripts/lib/runtime.mjs, shared with the
+ * Playwright end-to-end runner so both stacks behave identically.
  */
 
-import { spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
+import { ensureFreshBuild, runNodeCli } from "./lib/runtime.mjs";
 
 const DB_NAME = process.env.VERIFY_MONGO_DB || "guidance_verify";
 const MONGO_VERSION = process.env.MONGOMS_VERSION || "8.2.6";
 const SEED_MANUAL =
   process.env.VERIFY_ADMIN_USER || process.env.VERIFY_COUNSELOR_USER || process.env.VERIFY_STUDENT_USER;
-
-/** Newest modification time across the directories that end up in the build. */
-function newestSourceMtime(dirs) {
-  let newest = 0;
-
-  const walk = (target) => {
-    if (!fs.existsSync(target)) return;
-    const stat = fs.statSync(target);
-
-    if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(target)) walk(path.join(target, entry));
-      return;
-    }
-
-    if (stat.mtimeMs > newest) newest = stat.mtimeMs;
-  };
-
-  for (const dir of dirs) walk(dir);
-  return newest;
-}
-
-/**
- * The verification runs against the production build, so a stale `.next` would
- * silently test old code. Rebuild when any source file is newer than the build.
- */
-async function ensureFreshBuild() {
-  const buildId = path.join(process.cwd(), ".next", "BUILD_ID");
-  const sources = ["app", "lib", "components", "middleware.js", "next.config.mjs"];
-
-  if (!fs.existsSync(buildId)) {
-    console.log("\nNo production build found — building ...");
-    const build = await run(process.execPath, ["node_modules/next/dist/bin/next", "build"], {}, "npm run build");
-    return build.code === 0;
-  }
-
-  const builtAt = fs.statSync(buildId).mtimeMs;
-  if (newestSourceMtime(sources) > builtAt) {
-    console.log("\nSource files changed since the last build — rebuilding ...");
-    const build = await run(process.execPath, ["node_modules/next/dist/bin/next", "build"], {}, "npm run build");
-    if (build.code !== 0) {
-      console.log(build.output.slice(-2000));
-      return false;
-    }
-    return true;
-  }
-
-  return true;
-}
-
-function run(command, args, env, label) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env },
-    });
-
-    let output = "";
-    child.stdout.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-
-    // A missing binary should fail the step, not crash the whole run.
-    child.on("error", (error) => resolve({ code: 1, output: `${error.message}` }));
-    child.on("close", (code) => resolve({ code: code ?? 1, output }));
-
-    if (label) console.log(`\n--- ${label} ---`);
-  });
-}
-
-// Run a CLI installed in node_modules through node itself, which behaves the
-// same on Windows (.cmd shims are not executable via spawn) and on POSIX.
-function runNodeCli(entry, args, env, label) {
-  return run(process.execPath, [entry, ...args], env, label);
-}
 
 async function main() {
   // Prisma's MongoDB connector needs a replica set for transactions (and for
