@@ -1,33 +1,209 @@
 "use client";
+
 import * as React from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { LoadingState, ErrorState, PageHeader } from "@/components/ui/states";
+import { StatCard } from "@/components/ui/stat-card";
+import { apiRequest } from "@/lib/client-api";
+import {
+  LayoutDashboard,
+  BarChart3,
+  ClipboardList,
+  Star,
+  Brain,
+  FileText,
+  Video,
+  LifeBuoy,
+  Info,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 
 export default function StudentDashboard() {
   const [stats, setStats] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
-  React.useEffect(() => {
-    fetch("/api/reports?type=dashboard").then(r=>r.json()).then(setStats).catch(()=>{}).finally(()=>setLoading(false));
+  const [loadError, setLoadError] = React.useState("");
+
+  const fetchStats = React.useCallback(() => {
+    return apiRequest("/api/reports?type=dashboard")
+      .then((response) => {
+        if (!response.ok) {
+          setLoadError("دریافت اطلاعات داشبورد با خطا مواجه شد.");
+          return;
+        }
+        setStats(response.data);
+        setLoadError("");
+      })
+      .catch(() => setLoadError("دریافت اطلاعات داشبورد با خطا مواجه شد."))
+      .finally(() => setLoading(false));
   }, []);
-  if (loading) return <div className="space-y-4"><Skeleton className="h-8 w-48"/><Skeleton className="h-32"/><Skeleton className="h-32"/></div>;
-  const avg = stats?.avgGrade ?? 0;
+
+  React.useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <LoadingState variant="cards" rows={4} />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return <ErrorState description={loadError} onRetry={() => fetchStats()} />;
+  }
+
+  const average = stats?.avgGrade ?? 0;
+  const profileComplete = Boolean(stats?.profileComplete);
+  const interestsCount = stats?.interestsCount ?? 0;
+  const abilitiesCount = stats?.abilitiesCount ?? 0;
+
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-bold">داشبورد دانش‌آموز</h1><p className="text-muted-foreground mt-1">وضعیت پرونده هدایت تحصیلی شما</p></div>
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card><CardHeader><CardTitle className="text-sm">میانگین نمرات</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold">{avg}</div><Progress value={(avg/20)*100} className="mt-2"/></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm">آزمون‌های انجام‌شده</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold">{stats?.totalTests ?? 0}</div></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm">وضعیت پرونده</CardTitle></CardHeader><CardContent><Badge variant={stats?.profileComplete ? "default":"secondary"}>{stats?.profileComplete ? "کامل":"ناقص"}</Badge></CardContent></Card>
+      <PageHeader
+        icon={LayoutDashboard}
+        title="داشبورد دانش‌آموز"
+        description="وضعیت پرونده هدایت تحصیلی شما در یک نگاه"
+        actions={
+          <Button asChild variant="outline">
+            <Link href="/student/guidance">
+              <FileText className="h-4 w-4" />
+              نتیجه هدایت تحصیلی
+            </Link>
+          </Button>
+        }
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="میانگین نمرات"
+          value={average}
+          hint="میانگین تمام نمرات ثبت‌شده"
+          icon={BarChart3}
+          tone="blue"
+          href="/student/grades"
+        />
+        <StatCard
+          title="آزمون‌های انجام‌شده"
+          value={stats?.totalTests ?? 0}
+          icon={ClipboardList}
+          tone="violet"
+          href="/student/tests"
+        />
+        <StatCard
+          title="علایق ثبت‌شده"
+          value={interestsCount}
+          icon={Star}
+          tone="amber"
+          href="/student/interests"
+        />
+        <StatCard
+          title="توانایی‌های ثبت‌شده"
+          value={abilitiesCount}
+          icon={Brain}
+          tone="emerald"
+          href="/student/abilities"
+        />
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card><CardHeader><CardTitle>علایق ثبت‌شده</CardTitle><CardDescription>{stats?.interestsCount ?? 0} مورد</CardDescription></CardHeader><CardContent><Button asChild variant="outline"><Link href="/student/interests">مدیریت علایق</Link></Button></CardContent></Card>
-        <Card><CardHeader><CardTitle>توانایی‌ها</CardTitle><CardDescription>{stats?.abilitiesCount ?? 0} مورد</CardDescription></CardHeader><CardContent><Button asChild variant="outline"><Link href="/student/abilities">مدیریت توانایی‌ها</Link></Button></CardContent></Card>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">وضعیت تکمیل پرونده</CardTitle>
+            <CardDescription>
+              پرونده‌ای که کامل باشد، پیشنهاد هدایت تحصیلی دقیق‌تری تولید می‌کند.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Badge variant={profileComplete ? "default" : "secondary"}>
+                {profileComplete ? "پرونده کامل است" : "پرونده ناقص است"}
+              </Badge>
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {profileComplete ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    همه اطلاعات لازم ثبت شده است
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                    برخی اطلاعات هنوز ثبت نشده است
+                  </>
+                )}
+              </span>
+            </div>
+
+            <Progress value={Math.min(100, (average / 20) * 100)} />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Button asChild variant="outline" className="justify-start">
+                <Link href="/student/grades">ثبت و مشاهده نمرات</Link>
+              </Button>
+              <Button asChild variant="outline" className="justify-start">
+                <Link href="/student/profile">تکمیل پروفایل</Link>
+              </Button>
+              <Button asChild variant="outline" className="justify-start">
+                <Link href="/student/interests">علایق من</Link>
+              </Button>
+              <Button asChild variant="outline" className="justify-start">
+                <Link href="/student/abilities">توانایی‌های من</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Video className="h-4 w-4 text-primary" />
+                ویدئوهای آموزشی
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <p className="text-sm leading-6 text-muted-foreground">
+                ویدئوهای معرفی رشته‌های تحصیلی و روش انتخاب مسیر را ببینید.
+              </p>
+              <Button asChild variant="outline" size="sm" className="w-full">
+                <Link href="/student/videos">مشاهده ویدئوها</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <LifeBuoy className="h-4 w-4 text-primary" />
+                پشتیبانی
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <p className="text-sm leading-6 text-muted-foreground">
+                در صورت بروز مشکل در نمرات یا آزمون‌ها، تیکت پشتیبانی ثبت کنید.
+              </p>
+              <Button asChild variant="outline" size="sm" className="w-full">
+                <Link href="/student/support">ثبت تیکت پشتیبانی</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
-      <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20"><CardHeader><CardTitle className="text-amber-800 dark:text-amber-200">یادآوری</CardTitle></CardHeader><CardContent className="text-sm text-amber-900 dark:text-amber-100">نتیجه هدایت تحصیلی صرفاً «پیشنهاد اولیه برای بررسی توسط مشاور» است و تصمیم نهایی بر عهده مشاور و شما می‌باشد.</CardContent></Card>
+
+      <Card className="border-amber-500/30 bg-amber-500/5">
+        <CardContent className="flex items-start gap-3 p-5">
+          <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <p className="text-sm leading-7 text-amber-900 dark:text-amber-100">
+            نتیجه هدایت تحصیلی این سامانه «پیشنهاد اولیه برای بررسی توسط مشاور» است و جایگزین
+            تصمیم مشاور و خانواده نیست.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

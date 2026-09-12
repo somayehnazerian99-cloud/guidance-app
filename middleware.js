@@ -9,7 +9,11 @@ const PUBLIC_PATHS = new Set([
   "/login/counselor",
   "/login/student",
   "/reset-password",
+  "/forgot-password",
 ]);
+
+// Public route prefixes (self-service sign-up pages).
+const PUBLIC_PREFIXES = ["/register"];
 
 // Panel prefix -> login page of the matching role.
 const PANEL_LOGIN = {
@@ -116,6 +120,7 @@ export function middleware(request) {
 
   if (
     PUBLIC_PATHS.has(pathname) ||
+    PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) ||
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/robots") ||

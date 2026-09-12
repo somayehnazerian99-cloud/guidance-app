@@ -19,6 +19,11 @@ model User {
   email         String?
   role          String    @default("STUDENT") // ADMIN, COUNSELOR, STUDENT
   isActive      Boolean   @default(true)
+  // Self-registered counselors start as PENDING and cannot sign in until an
+  // administrator approves them. Accounts created by an admin (and every
+  // account that predates this field) are APPROVED. Possible values:
+  // PENDING, APPROVED, REJECTED
+  approvalStatus String   @default("APPROVED")
   lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -29,9 +34,12 @@ model User {
   auditLogs        AuditLog[]       @relation("UserAuditLogs")
   assignedStudents StudentProfile[] @relation("CounselorStudents")
   assignedClasses  Class[]          @relation("CounselorClasses")
+  supportTickets   SupportTicket[]  @relation("UserSupportTickets")
+  supportReplies   SupportReply[]   @relation("UserSupportReplies")
 
   @@index([role])
   @@index([email])
+  @@index([role, approvalStatus])
 }
 
 model Session {
@@ -296,6 +304,41 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([action])
+}
+
+/// A support request opened by any signed-in user (student or counselor).
+model SupportTicket {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation("UserSupportTickets", fields: [userId], references: [id])
+  subject   String
+  category  String   @default("OTHER") // ACCOUNT, GRADES, TESTS, TECHNICAL, OTHER
+  priority  String   @default("NORMAL") // LOW, NORMAL, HIGH
+  status    String   @default("OPEN") // OPEN, IN_PROGRESS, CLOSED
+  closedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  replies SupportReply[] @relation("TicketReplies")
+
+  @@index([userId])
+  @@index([status])
+}
+
+/// A single message inside a support ticket thread.
+model SupportReply {
+  id        String        @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId  String        @db.ObjectId
+  ticket    SupportTicket @relation("TicketReplies", fields: [ticketId], references: [id], onDelete: Cascade)
+  userId    String        @db.ObjectId
+  user      User          @relation("UserSupportReplies", fields: [userId], references: [id])
+  body      String
+  // True when the message was written by an administrator, so the UI can show
+  // the staff badge without joining the author's role at read time.
+  isStaff   Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
 }
 
 model PasswordResetToken {

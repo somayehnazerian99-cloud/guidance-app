@@ -10,6 +10,7 @@ import {
   normalizeIp,
 } from "@/lib/auth";
 import { loginSchema } from "@/lib/validation";
+import { COUNSELOR_APPROVAL, isCounselorPending } from "@/lib/permissions";
 
 // 5 failed attempts per (ip + username) and 20 per ip, within 15 minutes.
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -74,6 +75,28 @@ export async function POST(request) {
       return failLogin("role_mismatch", user.id);
     }
 
+    // A counselor who signed up through the public registration form cannot use
+    // the system until an administrator approves the account. The check is a
+    // successful credential comparison away, so an attacker cannot use this
+    // response to discover a username that does not exist.
+    if (isCounselorPending(user)) {
+      const rejected = user.approvalStatus === COUNSELOR_APPROVAL.REJECTED;
+      await createAuditLog(
+        user.id,
+        "FAILED_LOGIN",
+        { reason: rejected ? "account_rejected" : "account_pending_approval" },
+        ip
+      );
+      return NextResponse.json(
+        {
+          error: rejected
+            ? "ثبت‌نام شما توسط مدیر سیستم رد شده است. برای پیگیری با پشتیبانی تماس بگیرید."
+            : "حساب کاربری شما در انتظار تأیید مدیر سیستم است. پس از تأیید می‌توانید وارد شوید.",
+        },
+        { status: 403 }
+      );
+    }
+
     const isValidPassword = await verifyPassword(password, user.password);
     if (!isValidPassword) {
       return failLogin("wrong_password", user.id);
@@ -103,6 +126,10 @@ export async function POST(request) {
       },
       redirect: `/${user.role.toLowerCase()}`,
     });
+
+    // Every panel except the admin one is behind an approved counselor or an
+    // active student account; `isCounselorApproved` is re-checked on each
+    // request by validateSession.
 
     setSessionCookie(response, session.token, isSecure);
 

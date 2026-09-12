@@ -620,6 +620,410 @@ async function runLiveChecks(base) {
     assert(payload.message.includes("اگر این نام کاربری"), "the response differs for unknown users");
     return "generic response";
   });
+
+  // =========================================================================
+  // Self-service registration
+  // =========================================================================
+
+  const stamp = Date.now().toString().slice(-8);
+
+  // The password-reset checks above intentionally revoke every session of the
+  // student account, and a development build exercises that path. Take a fresh
+  // cookie so the feature checks below are correct in both dev and production
+  // runs instead of silently depending on the early return.
+  const refreshedStudent = await login(base, { ...CREDENTIALS.student, role: "STUDENT" });
+  if (refreshedStudent.cookie) {
+    student.cookie = refreshedStudent.cookie;
+    student.status = refreshedStudent.status;
+  }
+
+  const post = (path, cookie, body) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json", Origin: base, ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+
+  const patch = (path, cookie, body) =>
+    fetch(`${base}${path}`, {
+      method: "PATCH",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json", Origin: base, ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+
+  /** Find the id of a user created during this run, so it can be cleaned up. */
+  const findUserId = async (username) => {
+    const res = await fetch(`${base}/api/users?limit=50&search=${username}`, as(admin.cookie));
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return (payload.users || []).find((entry) => entry.username === username)?.id || null;
+  };
+
+  await check("public registration cannot create an administrator", async () => {
+    const res = await post("/api/auth/register", null, {
+      role: "ADMIN",
+      firstName: "ا",
+      lastName: "ب",
+      username: `hack${stamp}`,
+      password: "StrongPass1",
+    });
+
+    assert(res.status === 400, `an admin account was creatable through sign-up (${res.status})`);
+
+    // Nothing must have been written: the username can still be used later.
+    const stillFree = await findUserId(`hack${stamp}`);
+    assert(!stillFree, "a rejected registration left a user record behind");
+    return "400";
+  });
+
+  await check("registration enforces the username and password rules", async () => {
+    const badUsername = await post("/api/auth/register", null, {
+      role: "STUDENT",
+      firstName: "ا",
+      lastName: "ب",
+      username: "ali_1405",
+      password: "StrongPass1",
+    });
+    assert(badUsername.status === 400, `an underscore username was accepted (${badUsername.status})`);
+
+    const weakPassword = await post("/api/auth/register", null, {
+      role: "STUDENT",
+      firstName: "ا",
+      lastName: "ب",
+      username: `weak${stamp}`,
+      password: "weakpass",
+    });
+    assert(weakPassword.status === 400, `a weak password was accepted (${weakPassword.status})`);
+    return "400 for both";
+  });
+
+  await check("a self-registered student can sign in immediately", async () => {
+    const username = `std${stamp}`;
+    const registered = await post("/api/auth/register", null, {
+      role: "STUDENT",
+      firstName: "دانش‌آموز",
+      lastName: "آزمایشی",
+      username,
+      password: "StrongPass1",
+      grade: 8,
+      schoolYear: "1404-1405",
+    });
+
+    assert(registered.status === 201, `registration failed (${registered.status})`);
+    const payload = await registered.json();
+    assert(payload.requiresApproval === false, "a student sign-up should not await approval");
+
+    const userId = await findUserId(username);
+    assert(userId, "the registered student is missing from the user list");
+
+    try {
+      const signedIn = await login(base, { username, password: "StrongPass1", role: "STUDENT" });
+      assert(signedIn.status === 200, `the new student could not sign in (${signedIn.status})`);
+      assert(signedIn.cookie, "no session cookie was issued");
+
+      // The student must land in their own panel, not in someone else's.
+      const panel = await fetch(`${base}/api/auth/me`, as(signedIn.cookie));
+      assert(panel.status === 200, `the new session is not usable (${panel.status})`);
+      const me = await panel.json();
+      assert(me.user.role === "STUDENT", "the new account has the wrong role");
+      assert(!JSON.stringify(me).includes("$2"), "the response leaked a password hash");
+
+      const adminOnly = await fetch(`${base}/api/users?limit=1`, as(signedIn.cookie));
+      assert(adminOnly.status === 403, `the new student reached an admin API (${adminOnly.status})`);
+
+      return "201 → login 200 as STUDENT";
+    } finally {
+      const removed = await fetch(
+        `${base}/api/users/${userId}`,
+        as(admin.cookie, { method: "DELETE", headers: { Origin: base } })
+      );
+      assert(removed.status === 200, `cleanup of the registered student failed (${removed.status})`);
+    }
+  });
+
+  await check("a self-registered counselor cannot sign in before approval", async () => {
+    const username = `cns${stamp}`;
+    const registered = await post("/api/auth/register", null, {
+      role: "COUNSELOR",
+      firstName: "مشاور",
+      lastName: "آزمایشی",
+      username,
+      password: "StrongPass1",
+    });
+
+    assert(registered.status === 201, `counselor registration failed (${registered.status})`);
+    const payload = await registered.json();
+    assert(payload.requiresApproval === true, "a counselor sign-up must await approval");
+
+    const userId = await findUserId(username);
+    assert(userId, "the registered counselor is missing from the user list");
+
+    try {
+      const blocked = await login(base, { username, password: "StrongPass1", role: "COUNSELOR" });
+      assert(blocked.status === 403, `a pending counselor signed in (${blocked.status})`);
+      assert(!blocked.cookie, "a session was issued to a pending counselor");
+      assert(
+        (blocked.body?.error || "").includes("تأیید"),
+        "the pending-approval message is missing"
+      );
+
+      const approved = await patch(`/api/counselors/${userId}`, admin.cookie, { decision: "APPROVE" });
+      assert(approved.status === 200, `approval failed (${approved.status})`);
+
+      const allowed = await login(base, { username, password: "StrongPass1", role: "COUNSELOR" });
+      assert(allowed.status === 200, `the approved counselor still cannot sign in (${allowed.status})`);
+
+      return "403 pending → 200 approved";
+    } finally {
+      const removed = await fetch(
+        `${base}/api/users/${userId}`,
+        as(admin.cookie, { method: "DELETE", headers: { Origin: base } })
+      );
+      assert(removed.status === 200, `cleanup of the registered counselor failed (${removed.status})`);
+    }
+  });
+
+  await check("counselor approval is refused for non-admins and for non-counselors", async () => {
+    const counselors = await fetch(`${base}/api/counselors`, as(admin.cookie)).then((res) =>
+      res.ok ? res.json() : { counselors: [] }
+    );
+    const target = (counselors.counselors || []).find((entry) => entry.role !== "ADMIN");
+
+    // A student must not be able to approve anyone.
+    const asStudent = await patch(`/api/counselors/${student.body?.user?.id || "x"}`, student.cookie, {
+      decision: "APPROVE",
+    });
+    assert(
+      asStudent.status === 403 || asStudent.status === 404,
+      `a student reached the approval endpoint (${asStudent.status})`
+    );
+
+    if (target) {
+      // Approving a non-counselor id must 404 rather than repurpose the account.
+      const wrongRole = await patch(`/api/counselors/${student.body.user.id}`, admin.cookie, {
+        decision: "APPROVE",
+      });
+      assert(wrongRole.status === 404, `a non-counselor was approvable (${wrongRole.status})`);
+    }
+
+    const badDecision = await patch(`/api/counselors/${counselors.counselors?.[0]?.id || "x"}`, admin.cookie, {
+      decision: "DELETE",
+    });
+    assert(badDecision.status === 400, `an unknown decision was accepted (${badDecision.status})`);
+
+    return "403 for students, 404 for wrong role, 400 for bad input";
+  });
+
+  // =========================================================================
+  // Audit log
+  // =========================================================================
+
+  await check("the audit log is closed to anonymous and non-admin callers", async () => {
+    const anonymous = await fetch(`${base}/api/audit-logs`, { redirect: "manual" });
+    assert(anonymous.status === 401, `anonymous read returned ${anonymous.status}`);
+
+    const asStudent = await fetch(`${base}/api/audit-logs`, as(student.cookie));
+    assert(asStudent.status === 403, `a student read the audit log (${asStudent.status})`);
+
+    const asCounselor = await fetch(`${base}/api/audit-logs`, as(counselor.cookie));
+    assert(asCounselor.status === 403, `a counselor read the audit log (${asCounselor.status})`);
+
+    return "401 anonymous, 403 student, 403 counselor";
+  });
+
+  await check("the admin audit log is Persian, paginated and free of secrets", async () => {
+    const res = await fetch(`${base}/api/audit-logs?limit=20`, as(admin.cookie));
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+
+    const payload = await res.json();
+    assert(Array.isArray(payload.logs), "the response has no logs array");
+    assert(payload.pagination && payload.pagination.total >= 0, "pagination is missing");
+    assert(Array.isArray(payload.actions) && payload.actions.length > 0, "the filter list is empty");
+    assert(payload.logs.length > 0, "the audit log is empty after a full verification run");
+
+    for (const entry of payload.logs) {
+      assert(typeof entry.sentence === "string" && entry.sentence.length > 5, "missing Persian sentence");
+      assert(/[\u0600-\u06FF]/.test(entry.sentence), "the sentence is not Persian");
+      assert(typeof entry.actionLabel === "string", "missing the action label");
+      assert(entry.details === undefined, "raw details must not be exposed");
+    }
+
+    // The most recent run must be visible in the trail.
+    assert(
+      payload.logs.some((entry) => entry.action === "LOGIN" || entry.action === "REGISTER"),
+      "no LOGIN/REGISTER entry in the newest audit rows"
+    );
+
+    const serialized = JSON.stringify(payload);
+    assert(!serialized.includes("$2"), "the audit response contains a password hash");
+    assert(!serialized.includes("StrongPass1"), "the audit response contains a registered password");
+
+    return `${payload.logs.length} entries, total ${payload.pagination.total}`;
+  });
+
+  await check("audit filters and pagination are validated", async () => {
+    const filtered = await fetch(`${base}/api/audit-logs?action=LOGIN&limit=5`, as(admin.cookie));
+    assert(filtered.status === 200, `filtered read returned ${filtered.status}`);
+    const payload = await filtered.json();
+    for (const entry of payload.logs) {
+      assert(entry.action === "LOGIN", `the filter leaked a ${entry.action} row`);
+    }
+
+    const badPage = await fetch(`${base}/api/audit-logs?page=0`, as(admin.cookie));
+    assert(badPage.status === 400, `an invalid page was accepted (${badPage.status})`);
+
+    const badLimit = await fetch(`${base}/api/audit-logs?limit=5000`, as(admin.cookie));
+    assert(badLimit.status === 400, `an oversized limit was accepted (${badLimit.status})`);
+
+    return `${payload.logs.length} LOGIN rows, 400 on invalid input`;
+  });
+
+  // =========================================================================
+  // Support tickets
+  // =========================================================================
+
+  let studentTicketId = null;
+
+  await check("a student can open a support ticket", async () => {
+    const res = await post("/api/support/tickets", student.cookie, {
+      subject: `مشکل آزمایشی ${stamp}`,
+      body: "این تیکت توسط اسکریپت بررسی خودکار ساخته شده است.",
+      category: "GRADES",
+      priority: "NORMAL",
+    });
+
+    assert(res.status === 201, `ticket creation returned ${res.status}`);
+    const payload = await res.json();
+    assert(payload.ticket.status === "OPEN", "a new ticket must start as OPEN");
+    assert(payload.ticket._count.replies === 1, "the opening message was not stored");
+
+    studentTicketId = payload.ticket.id;
+    return `201 (${studentTicketId.slice(-6)})`;
+  });
+
+  await check("a ticket is only readable by its owner and the admin", async () => {
+    assert(studentTicketId, "no ticket to check");
+
+    const owner = await fetch(`${base}/api/support/tickets/${studentTicketId}`, as(student.cookie));
+    assert(owner.status === 200, `the owner could not read their ticket (${owner.status})`);
+    const payload = await owner.json();
+    assert(payload.ticket.canReply === true, "the owner should be able to reply");
+    assert(payload.ticket.canChangeStatus === false, "a student must not change the status");
+    assert(!JSON.stringify(payload).includes("userId"), "the client shape exposes the owner id");
+
+    const stranger = await fetch(`${base}/api/support/tickets/${studentTicketId}`, as(counselor.cookie));
+    assert(stranger.status === 404, `a counselor read a student ticket (${stranger.status})`);
+
+    const anonymous = await fetch(`${base}/api/support/tickets/${studentTicketId}`, { redirect: "manual" });
+    assert(anonymous.status === 401, `an anonymous caller read a ticket (${anonymous.status})`);
+
+    return "200 owner, 404 stranger, 401 anonymous";
+  });
+
+  await check("only the owner or an admin may write into a ticket thread", async () => {
+    const strider = await patch(`/api/support/tickets/${studentTicketId}`, counselor.cookie, {
+      body: "پیام غیرمجاز",
+    });
+    assert(strider.status === 404, `a counselor wrote into a student ticket (${strider.status})`);
+
+    const owner = await patch(`/api/support/tickets/${studentTicketId}`, student.cookie, {
+      body: "اطلاعات تکمیلی از سوی دانش‌آموز.",
+    });
+    assert(owner.status === 200, `the owner could not reply (${owner.status})`);
+    const payload = await owner.json();
+    assert(payload.reply.isStaff === false, "an ordinary message was marked as staff");
+
+    const statusAttempt = await patch(`/api/support/tickets/${studentTicketId}`, student.cookie, {
+      status: "CLOSED",
+    });
+    assert(statusAttempt.status === 403, `a student changed the ticket status (${statusAttempt.status})`);
+
+    return "404 stranger, 200 owner, 403 status change";
+  });
+
+  await check("the admin queue exposes the ticket and can answer and close it", async () => {
+    const queue = await fetch(`${base}/api/support/tickets`, as(admin.cookie));
+    assert(queue.status === 200, `the admin queue returned ${queue.status}`);
+    const payload = await queue.json();
+    assert(payload.canManage === true, "the admin cannot manage tickets");
+    assert(
+      (payload.tickets || []).some((ticket) => ticket.id === studentTicketId),
+      "the student ticket is missing from the admin queue"
+    );
+
+    const reply = await patch(`/api/support/tickets/${studentTicketId}`, admin.cookie, {
+      body: "پاسخ کارشناس پشتیبانی برای بررسی خودکار.",
+    });
+    assert(reply.status === 200, `the admin reply failed (${reply.status})`);
+    const replied = await reply.json();
+    assert(replied.reply.isStaff === true, "an admin reply was not marked as staff");
+    assert(replied.ticket.status === "IN_PROGRESS", `status did not advance (${replied.ticket.status})`);
+
+    const closed = await patch(`/api/support/tickets/${studentTicketId}`, admin.cookie, {
+      status: "CLOSED",
+    });
+    assert(closed.status === 200, `closing the ticket failed (${closed.status})`);
+
+    const closedReply = await patch(`/api/support/tickets/${studentTicketId}`, student.cookie, {
+      body: "پیام پس از بسته شدن تیکت.",
+    });
+    assert(closedReply.status === 403, `a closed ticket accepted a user message (${closedReply.status})`);
+
+    return "queue 200, staff reply 200, in-progress, closed, user reply 403";
+  });
+
+  await check("only an admin can delete a ticket, and the deletion is audited", async () => {
+    const asStudent = await fetch(`${base}/api/support/tickets/${studentTicketId}`, {
+      method: "DELETE",
+      redirect: "manual",
+      headers: { Origin: base, Cookie: student.cookie },
+    });
+    assert(asStudent.status === 403, `a student deleted a ticket (${asStudent.status})`);
+
+    const removed = await fetch(`${base}/api/support/tickets/${studentTicketId}`, {
+      method: "DELETE",
+      redirect: "manual",
+      headers: { Origin: base, Cookie: admin.cookie },
+    });
+    assert(removed.status === 200, `the admin could not delete the ticket (${removed.status})`);
+
+    const gone = await fetch(`${base}/api/support/tickets/${studentTicketId}`, as(admin.cookie));
+    assert(gone.status === 404, `the ticket still exists (${gone.status})`);
+
+    const audit = await fetch(`${base}/api/audit-logs?action=DELETE_TICKET`, as(admin.cookie));
+    assert(audit.status === 200, `audit read failed (${audit.status})`);
+    const payload = await audit.json();
+    assert((payload.logs || []).length > 0, "the ticket deletion was not audited");
+    assert(
+      payload.logs.every((entry) => entry.action === "DELETE_TICKET"),
+      "the action filter leaked other rows"
+    );
+
+    return "403 student, 200 admin, audited";
+  });
+
+  await check("tickets are scoped to the signed-in user", async () => {
+    const mine = await fetch(`${base}/api/support/tickets`, as(student.cookie));
+    assert(mine.status === 200, `the student queue returned ${mine.status}`);
+    const studentView = await mine.json();
+    assert(studentView.canManage === false, "a student must not get the manage flag");
+
+    const staffView = await fetch(`${base}/api/support/tickets`, as(counselor.cookie));
+    assert(staffView.status === 200, `the counselor queue returned ${staffView.status}`);
+    const counselorPayload = await staffView.json();
+    assert(counselorPayload.canManage === false, "a counselor must not get the manage flag");
+
+    // An admin cannot open tickets, only answer them.
+    const adminCreate = await post("/api/support/tickets", admin.cookie, {
+      subject: "تیکت مدیر آزمایشی",
+      body: "مدیر نباید بتواند تیکت جدید ثبت کند.",
+    });
+    assert(adminCreate.status === 403, `an admin opened a ticket (${adminCreate.status})`);
+
+    return "student and counselor see their own queue only";
+  });
 }
 
 async function main() {

@@ -7,6 +7,7 @@ import {
   normalizeIp,
   checkRateLimit,
   validatePasswordStrength,
+  getSessionTokenFromRequest,
 } from "@/lib/auth";
 import { changePasswordSchema } from "@/lib/validation";
 import prisma from "@/lib/prisma";
@@ -70,6 +71,17 @@ export async function POST(request) {
     await prisma.user.update({
       where: { id: auth.user.id },
       data: { password: hashedPassword },
+    });
+
+    // Changing a password must not leave other devices signed in with the old
+    // credential. The session that performed the change is kept so the user is
+    // not thrown out of the tab they are working in.
+    const currentToken = getSessionTokenFromRequest(request);
+    await prisma.session.deleteMany({
+      where: {
+        userId: auth.user.id,
+        ...(currentToken ? { NOT: { token: currentToken } } : {}),
+      },
     });
 
     await createAuditLog(auth.user.id, "PASSWORD_CHANGE", {}, ip);

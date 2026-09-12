@@ -23,6 +23,7 @@ import {
   User,
   ChevronLeft,
   X,
+  LifeBuoy,
 } from "lucide-react";
 
 const adminMenuItems = [
@@ -30,6 +31,7 @@ const adminMenuItems = [
   { href: "/admin/users", label: "کاربران", icon: Users },
   { href: "/admin/students", label: "دانش‌آموزان", icon: GraduationCap },
   { href: "/admin/counselors", label: "مشاوران", icon: User },
+  { href: "/admin/support", label: "پشتیبانی", icon: LifeBuoy },
   { href: "/admin/schools", label: "مدارس", icon: School },
   { href: "/admin/classes", label: "کلاس‌ها", icon: BookOpen },
   { href: "/admin/tests", label: "آزمون‌ها", icon: ClipboardList },
@@ -40,7 +42,7 @@ const adminMenuItems = [
   { href: "/admin/videos", label: "ویدئوها", icon: Video },
   { href: "/admin/reports", label: "گزارش‌ها", icon: FileText },
   { href: "/admin/settings", label: "تنظیمات", icon: Settings },
-  { href: "/admin/security-logs", label: "لاگ امنیتی", icon: Shield },
+  { href: "/admin/security-logs", label: "لاگ فعالیت‌ها", icon: Shield },
 ];
 
 const counselorMenuItems = [
@@ -49,6 +51,7 @@ const counselorMenuItems = [
   { href: "/counselor/tests", label: "آزمون‌ها", icon: ClipboardList },
   { href: "/counselor/grades", label: "نمرات", icon: BarChart3 },
   { href: "/counselor/reports", label: "گزارش‌ها", icon: FileText },
+  { href: "/counselor/support", label: "پشتیبانی", icon: LifeBuoy },
 ];
 
 const studentMenuItems = [
@@ -62,6 +65,7 @@ const studentMenuItems = [
   { href: "/student/guidance", label: "نتیجه هدایت", icon: FileText },
   { href: "/student/videos", label: "ویدئوهای آموزشی", icon: Video },
   { href: "/student/notifications", label: "اعلان‌ها", icon: Bell },
+  { href: "/student/support", label: "پشتیبانی", icon: LifeBuoy },
   { href: "/student/settings", label: "تنظیمات", icon: Settings },
 ];
 

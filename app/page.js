@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GraduationCap, Presentation } from "lucide-react";
 
 export const metadata = {
   title: "سیستم هدایت تحصیلی",
@@ -59,6 +60,39 @@ export default function HomePage() {
               <p className="text-sm text-muted-foreground">ورود دانش‌آموز</p>
             </div>
           </Link>
+        </div>
+
+        {/* Sign-up call to action */}
+        <div className="rounded-2xl border bg-card/70 p-6 shadow-sm backdrop-blur">
+          <h2 className="text-center text-lg font-semibold">حساب کاربری ندارید؟</h2>
+          <p className="mt-1 text-center text-sm text-muted-foreground">
+            دانش‌آموزان می‌توانند بلافاصله ثبت‌نام کنند؛ ثبت‌نام مشاوران پس از تأیید مدیر سیستم
+            فعال می‌شود.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <Link
+              href="/register/student"
+              className="flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <GraduationCap className="h-4 w-4" />
+              ثبت‌نام دانش‌آموز
+            </Link>
+            <Link
+              href="/register/counselor"
+              className="flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors hover:border-primary/50"
+            >
+              <Presentation className="h-4 w-4" />
+              ثبت‌نام مشاور
+            </Link>
+          </div>
+
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            ثبت‌نام مدیر سیستم به‌صورت عمومی امکان‌پذیر نیست. رمز عبور خود را فراموش کرده‌اید؟{" "}
+            <Link href="/forgot-password" className="font-medium text-primary hover:underline">
+              بازیابی رمز عبور
+            </Link>
+          </p>
         </div>
 
         {/* Footer */}

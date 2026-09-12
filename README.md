@@ -187,7 +187,7 @@ npm run seed            # پر کردن دیتابیس با داده‌های ن
 > است؛ Prisma Client از `schema.prisma` ساخته می‌شود و ایندکس‌ها در سطح Application
 > تعریف شده‌اند.
 
-### مدل‌های دیتابیس (۲۰ مدل)
+### مدل‌های دیتابیس (۲۲ مدل)
 
 | گروه | مدل‌ها |
 |------|--------|
@@ -196,7 +196,12 @@ npm run seed            # پر کردن دیتابیس با داده‌های ن
 | داده‌های دانش‌آموز | `Grade`, `Interest`, `Ability`, `ParentOpinion`, `Notification` |
 | آزمون‌ها | `GuidanceTest`, `Question`, `Option`, `TestAttempt`, `TestAnswer` |
 | خروجی و محتوا | `GuidanceResult`, `EducationalVideo` |
+| پشتیبانی | `SupportTicket`, `SupportReply` |
 | حسابرسی | `AuditLog` |
+
+فیلد `User.approvalStatus` (`PENDING` / `APPROVED` / `REJECTED`) وضعیت تأیید مشاور را
+نگه می‌دارد. حساب‌هایی که پیش از افزودن این فیلد ساخته شده‌اند و حساب‌های ساخته‌شده
+توسط مدیر، «تأییدشده» در نظر گرفته می‌شوند (`isCounselorApproved` در `lib/permissions.js`).
 
 روابط با نام‌های صریح (`@relation("...")`) برای MongoDB تعریف شده و روی فیلدهای
 پرتکرار (`studentId`, `testId`, `role`, `email`, `action`, ...) ایندکس وجود دارد.
@@ -236,8 +241,12 @@ npm start          # اجرای Build تولیدی
 | محاسبه نتیجه هدایت تحصیلی | ✅ | دانش‌آموزان خودش | ❌ |
 | مشاهده نتیجه هدایت تحصیلی | ✅ | دانش‌آموزان خودش | فقط نتیجه خودش |
 | ویدئوهای آموزشی | مدیریت | مشاهده | مشاهده |
+| تأیید/رد ثبت‌نام مشاور | ✅ | ❌ | ❌ |
+| لاگ فعالیت‌ها (Audit Log) | ✅ | ❌ | ❌ |
+| صف کامل تیکت‌های پشتیبانی | ✅ (پاسخ/تغییر وضعیت/حذف) | فقط تیکت‌های خودش | فقط تیکت‌های خودش |
 
-ماتریس بالا در `lib/permissions.js` کدنویسی شده و در `tests/security.test.mjs` تست می‌شود.
+ماتریس بالا در `lib/permissions.js` کدنویسی شده و در `tests/security.test.mjs` و
+`tests/features.test.mjs` تست می‌شود.
 
 ---
 
@@ -248,27 +257,34 @@ guidance-app/
 ├── app/
 │   ├── layout.js  page.js  globals.css  robots.js  sitemap.js  favicon.ico
 │   ├── login/{admin,counselor,student}/page.js
-│   ├── reset-password/page.js
+│   ├── register/page.js + register/{student,counselor}/page.js
+│   ├── forgot-password/page.js  reset-password/page.js
 │   ├── admin/      layout.js + page.js + users students counselors schools classes
 │   │               tests grades interests abilities parent-opinions videos
-│   │               reports settings security-logs
-│   ├── counselor/  layout.js + page.js + students tests grades reports settings
+│   │               reports settings security-logs support
+│   ├── counselor/  layout.js + page.js + students tests grades reports settings support
 │   ├── student/    layout.js + page.js + profile grades tests interests abilities
-│   │               parent-opinion guidance videos notifications settings
-│   └── api/        auth/{login,logout,me,change-password,forgot-password,reset-password}
+│   │               parent-opinion guidance videos notifications settings support
+│   └── api/        auth/{login,logout,me,change-password,forgot-password,reset-password,register}
+│                   audit-logs support/tickets/{,[id]}
 │                   users/{,[id]} students/{,[id]} grades interests abilities
 │                   parent-opinions tests/{,[id],submit} videos guidance
-│                   schools classes counselors notifications reports
+│                   schools classes counselors/{,[id]} notifications reports
 ├── components/
 │   ├── ui/         button card dialog alert-dialog table badge input label
 │   │               dropdown-menu progress separator skeleton toast
+│   │               textarea states (Loading/Empty/Error/PageHeader) stat-card
+│   ├── auth/       auth-shell (قاب مشترک صفحه‌های ورود/ثبت‌نام/بازیابی)
+│   ├── support/    ticket-center (مشترک بین سه پنل)
 │   ├── layout/     dashboard-layout sidebar header
-│   └── forms/      login-form reset-password-form
+│   └── forms/      login-form register-form forgot-password-form
+│                   reset-password-form change-password-form
 ├── lib/            prisma auth server-auth serializers permissions validation
+│                   password-policy audit-log support client-api
 │                   guidance-engine utils
 ├── prisma/         schema.prisma seed.js
-├── scripts/        verify-auth-http.mjs
-├── tests/          security.test.mjs
+├── scripts/        verify-auth-http.mjs verify-password-reset.mjs
+├── tests/          security.test.mjs features.test.mjs
 ├── middleware.js
 └── .github/workflows/ci.yml
 ```
@@ -285,6 +301,9 @@ guidance-app/
 - فعال/غیرفعال شدن حساب، Sessionهای موجود را در همان درخواست بعدی بی‌اعتبار می‌کند.
 - `POST /api/auth/logout` رکورد Session را از دیتابیس حذف می‌کند (Logout واقعی) و کوکی را پاک می‌کند.
 - تغییر رمز عبور نیازمند رمز فعلی است و پس از آن رمز جدید نباید با رمز فعلی یکسان باشد.
+  پس از تغییر رمز، Sessionهای سایر دستگاه‌ها باطل می‌شوند (فقط Session جاری معتبر می‌ماند).
+- ثبت‌نام عمومی فقط برای دانش‌آموز و مشاور است؛ رمز پیش‌فرض یا مشترکی وجود ندارد و هر
+  کاربر رمز خودش را با رعایت سیاست رمز انتخاب می‌کند (بخش ۱۱).
 - ورودهای سه پنل **Role-Locked** هستند: هر صفحه Role خودش را به سرور می‌فرستد و سرور
   آن را با Role ذخیره‌شده مقایسه می‌کند؛ بنابراین رمز مدیر روی صفحه‌ی دانش‌آموز کار نمی‌کند.
 - Rate Limit ورود: ۵ تلاش ناموفق برای هر `IP + نام کاربری` و ۲۰ تلاش برای هر IP در
@@ -296,7 +315,76 @@ guidance-app/
 
 ---
 
-## ۱۱. امنیت
+## ۱۱. ثبت‌نام، پشتیبانی و لاگ فعالیت‌ها
+
+### ثبت‌نام کاربران
+
+| مسیر | چه کسی | نتیجه |
+|------|--------|-------|
+| `/register` | همه | انتخاب نوع حساب |
+| `/register/student` | همه | ثبت‌نام دانش‌آموز — بلافاصله قابل ورود |
+| `/register/counselor` | همه | ثبت‌نام مشاور — نیازمند تأیید مدیر |
+| `/admin/counselors` | مدیر | صف تأیید: تأیید یا رد + ثبت علت |
+
+- **ثبت‌نام مدیر وجود ندارد.** `registerSchema` یک Discriminated Union است که فقط
+  `STUDENT` و `COUNSELOR` را می‌پذیرد و در API هم نقش دوباره بررسی می‌شود؛ بنابراین
+  ارسال `role=ADMIN` به این Endpoint نتیجه‌ای جز ۴۰۰ ندارد.
+- نام کاربری و رمز عبور را **خود کاربر** انتخاب می‌کند و هر دو فقط شامل حروف انگلیسی و
+  اعداد هستند (`^[a-zA-Z0-9]+$` برای نام کاربری و سیاست رمز عبور برای رمز). یکسان بودن
+  این قواعد در کلاینت و سرور از `lib/validation.js` و `lib/password-policy.js` می‌آید.
+- مشاور تازه‌ثبت‌نام‌شده با `approvalStatus = PENDING` ذخیره می‌شود، رمز او Hash شده است
+  اما **اجازه ورود ندارد** (۴۰۳ با پیام فارسی و ثبت در Audit Log). `validateSession` هم
+  این وضعیت را در هر درخواست دوباره بررسی می‌کند، پس لغو تأیید یا رد شدن، Sessionهای
+  موجود را فوراً بی‌اعتبار می‌کند.
+- ثبت‌نام عمومی با Rate Limit روی IP محدود می‌شود (۱۰ ثبت‌نام در ساعت).
+- کد دانش‌آموزی اگر وارد نشود، در سرور به‌صورت یکتا ساخته می‌شود.
+
+### بازیابی رمز عبور
+
+| مسیر | کار |
+|------|-----|
+| `/forgot-password` | درخواست لینک بازیابی بر اساس نام کاربری |
+| `/reset-password?token=…` | تعیین رمز جدید با توکن یک‌بارمصرف |
+| `POST /api/auth/forgot-password` | ساخت توکن (HMAC-SHA256، انقضای ۶۰ دقیقه) |
+| `POST /api/auth/reset-password` | اعمال رمز جدید و باطل‌کردن همه Sessionها |
+| `POST /api/auth/change-password` | تغییر رمز با دانستن رمز فعلی (Sessionهای دیگر باطل می‌شوند) |
+
+پاسخ `/forgot-password` همیشه یکسان است تا نام‌های کاربری قابل شناسایی نباشند.
+
+### تیکت پشتیبانی
+
+| مسیر | چه کسی |
+|------|--------|
+| `/student/support` · `/counselor/support` | ثبت تیکت و پیگیری گفت‌وگو |
+| `/admin/support` | مشاهده صف، پاسخ، تغییر وضعیت، حذف |
+| `GET/POST /api/support/tickets` | فهرست و ثبت (مالکیت از Session خوانده می‌شود) |
+| `GET/PATCH/DELETE /api/support/tickets/[id]` | جزئیات، پاسخ/تغییر وضعیت، حذف (فقط مدیر) |
+
+- وضعیت‌ها: **باز** → **در حال بررسی** → **بسته شده**. پاسخ کارشناس، تیکت `OPEN` را
+  خودکار به `IN_PROGRESS` می‌برد.
+- تیکت هر کاربر فقط برای خودش و مدیر قابل مشاهده است؛ درخواست تیکت دیگران **۴۰۴**
+  می‌گیرد (نه ۴۰۳) تا شناسه‌های معتبر قابل حدس زدن نباشند.
+- تیکت بسته‌شده پیام جدید کاربر نمی‌پذیرد؛ تغییر وضعیت فقط برای مدیر مجاز است.
+- فلگ‌های `canReply` / `canChangeStatus` در **سرور** محاسبه و به کلاینت داده می‌شوند
+  (`toPublicTicket`)، پس هیچ UI نمی‌تواند مجوزی به خودش بدهد.
+
+### لاگ فعالیت‌ها (Audit Log)
+
+- صفحه `/admin/security-logs` و Endpoint `GET /api/audit-logs` (فقط مدیر، ۴۰۱ برای
+  ناشناس و ۴۰۳ برای سایر نقش‌ها) با فیلتر نوع رویداد، جست‌وجو و صفحه‌بندی.
+- هر رکورد در سرور به یک **جمله فارسی** تبدیل می‌شود؛ مثلاً:
+  «علی احمدی (دانش‌آموز) وارد سیستم شد» یا «مدیر سیستم ثبت‌نام مشاور «مریم رضایی» را تأیید کرد».
+  منطق متن در `lib/audit-log.js` است و هم صفحه‌ی لاگ و هم داشبورد مدیر از همان استفاده می‌کنند.
+- رویدادهای ثبت‌شده: ورود، خروج، ورود ناموفق، مسدودسازی موقت ورود، تغییر رمز،
+  درخواست/انجام/شکست بازیابی رمز، ثبت‌نام، تأیید/رد مشاور، ایجاد/ویرایش/حذف کاربر و
+  دانش‌آموز، تغییر نقش، رویدادهای آزمون و نمره، و رویدادهای تیکت پشتیبانی.
+- `sanitizeAuditDetails` پیش از ذخیره، کلیدهای حساس (`password`, `token`, `secret`, …) را
+  حذف می‌کند و متن را محدود می‌کند؛ زمان (UTC) و IP (از `x-forwarded-for` /
+  `x-real-ip`) ثبت می‌شود. `details` خام هرگز در پاسخ API برنمی‌گردد.
+
+---
+
+## ۱۲. امنیت
 
 ### کنترل‌های پیاده‌شده
 
@@ -350,8 +438,16 @@ guidance-app/
 | CSRF (Origin بیگانه) | ✅ تست HTTP |
 | عدم افشای Stack Trace در خطاها | ✅ تست HTTP |
 | هدرهای امنیتی و `no-store` | ✅ تست HTTP |
-| ورود/خروج واقعی سه نقش، IDOR، Privilege Escalation، CRUD کاربر/دانش‌آموز | ✅ اسکریپت `verify:live` — ۵۶ بررسی PASS |
+| ورود/خروج واقعی سه نقش، IDOR، Privilege Escalation، CRUD کاربر/دانش‌آموز | ✅ اسکریپت `verify:live` — PASS |
 | چرخه‌ی کامل توکن بازیابی رمز (هش‌شدن، انقضا، یک‌بارمصرف، باطل‌شدن سشن‌ها) | ✅ `verify-password-reset` — ۱۳ بررسی PASS |
+| غیرقابل‌ساخت بودن حساب ADMIN از طریق ثبت‌نام عمومی | ✅ تست خودکار + HTTP |
+| اجبار قواعد نام کاربری/رمز در ثبت‌نام (حروف انگلیسی و اعداد) | ✅ تست خودکار + HTTP |
+| عدم امکان ورود مشاور تا تأیید مدیر، و امکان ورود پس از تأیید | ✅ تست HTTP |
+| فقط مدیر بودن تأیید/رد مشاور (۴۰۳ برای سایر نقش‌ها) | ✅ تست HTTP |
+| ۴۰۱/۴۰۳ برای خواندن لاگ فعالیت‌ها توسط ناشناس و سایر نقش‌ها | ✅ تست HTTP |
+| فارسی، صفحه‌بندی‌شده و بدون Secret بودن خروجی لاگ فعالیت‌ها | ✅ تست HTTP |
+| جداسازی تیکت‌ها (۴۰۴ برای تیکت دیگران) و فقط-مدیر بودن حذف/تغییر وضعیت | ✅ تست HTTP |
+| جلوگیری از ارسال تکراری با Coalescing درخواست‌های یکسان | ✅ تست خودکار |
 
 > **محدودیت شناخته‌شده:** Rate Limit در حافظه‌ی پروسه نگهداری می‌شود؛ در استقرار
 > چند-Instance باید به یک Store مشترک (Redis/Upstash) منتقل شود. رابط تابع
@@ -359,12 +455,12 @@ guidance-app/
 
 ---
 
-## ۱۲. تست‌ها
+## ۱۳. تست‌ها
 
 ```bash
-npm test            # ۳۳ تست امنیت/اعتبارسنجی/موتور هدایت تحصیلی (بدون نیاز به دیتابیس)
-npm run verify:auth # Build تولیدی روی یک پورت آزاد + ۳۰ بررسی HTTP
-npm run verify:live # همان + MongoDB موقت + Seed + ۵۶ بررسی HTTP/زنده + ۱۳ بررسی Reset
+npm test            # ۶۴ تست امنیت/اعتبارسنجی/ثبت‌نام/پشتیبانی/لاگ (بدون نیاز به دیتابیس)
+npm run verify:auth # Build تولیدی روی یک پورت آزاد + بررسی‌های HTTP (۷۰ بررسی روی دیتابیس متصل)
+npm run verify:live # همان + MongoDB موقت + Seed + ۱۳ بررسی Reset
 ```
 
 `npm run verify:auth` سرور Production را بالا می‌آورد، بررسی‌ها را انجام می‌دهد و
@@ -374,12 +470,13 @@ npm run verify:live # همان + MongoDB موقت + Seed + ۵۶ بررسی HTTP/
 همه‌ی این‌ها را با یک MongoDB موقت (بدون نیاز به نصب) اجرا می‌کند و اگر سورس از
 آخرین Build جدیدتر باشد، خودش دوباره Build می‌گیرد تا کد قدیمی تست نشود.
 
-خروجی آخرین اجرا: `Schema pushed` → `Seed completed` → `PASSWORD RESET CHECKS PASSED (13/13)`
-→ `ALL CHECKS PASSED (56 passed, 1 skipped)`.
+آخرین اجرا روی MongoDB Atlas: `npm test` → ۶۴/۶۴ · `npm run verify:auth` →
+`ALL CHECKS PASSED — 70 passed, 0 skipped` · `npm run verify:password-reset` → ۱۳/۱۳.
+اسکریپت بررسی، داده‌های آزمایشی خودش را در پایان پاک می‌کند (کاربران و تیکت‌های تستی).
 
 ---
 
-## ۱۳. هدایت تحصیلی
+## ۱۴. هدایت تحصیلی
 
 الگوریتم در `lib/guidance-engine.js`:
 
@@ -396,7 +493,7 @@ WEIGHTS = { grades: 0.35, interests: 0.2, abilities: 0.2, testResults: 0.15, par
 
 ---
 
-## ۱۴. GitHub Actions
+## ۱۵. GitHub Actions
 
 Workflow در `.github/workflows/ci.yml`:
 
@@ -415,7 +512,7 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 
 ---
 
-## ۱۵. استقرار (Deploy)
+## ۱۶. استقرار (Deploy)
 
 1. دیتابیس MongoDB (Atlas) بسازید و کاربری با حداقل دسترسی بگیرید.
 2. در سرویس میزبانی (مثلاً Vercel) متغیرهای `DATABASE_URL`, `AUTH_SECRET`,
@@ -428,7 +525,7 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 
 ---
 
-## ۱۶. اعتبارات Development (فقط محلی)
+## ۱۷. اعتبارات Development (فقط محلی)
 
 `npm run seed` این داده‌ها را می‌سازد. **هرگز در Production استفاده نکنید.**
 
@@ -444,7 +541,7 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 
 ---
 
-## ۱۷. محدودیت‌ها و کارهای بعدی
+## ۱۸. محدودیت‌ها و کارهای بعدی
 
 - **Data Fetching سمت کلاینت**: صفحات پنل داده را از APIهای محافظت‌شده در
   Client Component می‌گیرند (به همین دلیل Authorization در APIها خط دفاعی اصلی است).
@@ -453,6 +550,11 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 - **Rate Limit در حافظه**: برای استقرار چند-Instance به Store مشترک منتقل شود.
 - **ارسال ایمیل بازیابی رمز**: در حال حاضر لینک Reset در Production به کاربر
   ایمیل نمی‌شود (Provider ایمیل متصل نیست)؛ باید یک سرویس ایمیل متصل شود.
+- **اطلاع‌رسانی به مشاور داوطلب**: پس از تأیید/رد شدن درخواست، تا اتصال سرویس ایمیل
+  خبری به متقاضی ارسال نمی‌شود؛ نتیجه فقط در پنل مدیر قابل مشاهده است.
+- **بخش‌های باقی‌مانده پنل مشاور**: صفحه‌های علایق، توانایی‌ها، نظر والدین، نتیجه
+  هدایت و ویدئوهای پنل مشاور هنوز جداگانه ساخته نشده‌اند (داده‌ها از طریق پرونده
+  دانش‌آموز و آزمون‌ها در دسترس است).
 - **آپلود فایل**: Thumbnail ویدئو و تصاویر پروفایل فعلاً فقط لینک هستند.
 - **تست مرورگر (E2E)**: تست‌های فعلی در سطح HTTP/دیتابیس هستند؛ برای پوشش کلیک‌به‌کلیک
   رابط کاربری می‌توان Playwright اضافه کرد.
@@ -461,7 +563,7 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 
 ---
 
-## ۱۸. عیب‌یابی
+## ۱۹. عیب‌یابی
 
 | مشکل | راه‌حل |
 |------|-------|
@@ -469,5 +571,9 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 | ورود با «نام کاربری یا رمز عبور صحیح نیست» در حالی که رمز درست است | مطمئن شوید از صفحه‌ی ورود همان نقش استفاده می‌کنید (سه پنل جداگانه‌اند) |
 | «تعداد تلاش‌های ورود بیش از حد مجاز است» | ۱۵ دقیقه صبر کنید یا سرور Development را دوباره اجرا کنید (شمارنده در حافظه است) |
 | «حساب کاربری غیرفعال است» | کاربر در پنل مدیر غیرفعال شده است |
+| «حساب کاربری شما در انتظار تأیید مدیر سیستم است» | مشاور خودش ثبت‌نام کرده است؛ از `/admin/counselors` تأییدش کنید |
+| «ثبت‌نام شما توسط مدیر سیستم رد شده است» | درخواست مشاور رد شده است؛ برای بازگشت، مدیر باید حساب را تأیید کند |
+| «تیکت یافت نشد» در صفحه پشتیبانی | تیکت متعلق به حساب دیگری است (یا حذف شده است)؛ هر کاربر فقط تیکت‌های خودش را می‌بیند |
+| بعد از تغییر رمز، دستگاه دیگر خارج شده است | رفتار عمدی: با تغییر رمز، Sessionهای قبلی باطل می‌شوند |
 | فونت فارسی بارگذاری نمی‌شود | `next/font` در زمان Build فونت را می‌گیرد؛ Build را با دسترسی شبکه اجرا کنید |
 | لاگین در CI کار نمی‌کند | Secretهای `DATABASE_URL` و `AUTH_SECRET` را تنظیم کنید |

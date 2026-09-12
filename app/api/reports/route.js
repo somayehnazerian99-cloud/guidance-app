@@ -28,20 +28,34 @@ export async function GET(request) {
 
 async function getDashboardStats(user) {
   if (user.role === "ADMIN") {
-    const [totalUsers, totalStudents, totalCounselors, totalSchools, totalTests, completedProfiles] =
-      await Promise.all([
-        prisma.user.count(),
-        prisma.studentProfile.count(),
-        prisma.user.count({ where: { role: "COUNSELOR" } }),
-        prisma.school.count(),
-        prisma.testAttempt.count({ where: { completed: true } }),
-        prisma.studentProfile.count({ where: { profileComplete: true } }),
-      ]);
+    const [
+      totalUsers,
+      totalStudents,
+      totalCounselors,
+      totalSchools,
+      totalTests,
+      completedProfiles,
+      pendingCounselors,
+      openTickets,
+    ] = await Promise.all([
+      prisma.user.count(),
+      prisma.studentProfile.count(),
+      prisma.user.count({ where: { role: "COUNSELOR" } }),
+      prisma.school.count(),
+      prisma.testAttempt.count({ where: { completed: true } }),
+      prisma.studentProfile.count({ where: { profileComplete: true } }),
+      // Work waiting on the administrator, surfaced on the dashboard so it is
+      // not missed behind its own menu entry.
+      prisma.user.count({ where: { role: "COUNSELOR", approvalStatus: "PENDING" } }),
+      prisma.supportTicket.count({ where: { NOT: { status: "CLOSED" } } }),
+    ]);
 
     const recentActivity = await prisma.auditLog.findMany({
-      take: 10,
+      take: 8,
       orderBy: { createdAt: "desc" },
-      include: { user: { select: { firstName: true, lastName: true } } },
+      include: {
+        user: { select: { firstName: true, lastName: true, role: true } },
+      },
     });
 
     return {
@@ -51,6 +65,8 @@ async function getDashboardStats(user) {
       totalSchools,
       totalTests,
       completedProfiles,
+      pendingCounselors,
+      openTickets,
       recentActivity,
     };
   }
