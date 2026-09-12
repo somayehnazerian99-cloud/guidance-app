@@ -236,6 +236,51 @@ test("an audit row is rendered as a Persian sentence naming the user", () => {
   assert.match(described.sentence, /دانش‌آموز/);
 });
 
+test("the role is not repeated when the account name already is the role label", () => {
+  const adminLog = describeAuditLog({
+    action: "LOGIN",
+    details: JSON.stringify({ role: "ADMIN" }),
+    user: { firstName: "مدیر", lastName: "سیستم", role: "ADMIN" },
+  });
+
+  assert.equal(adminLog.sentence, "مدیر سیستم وارد سیستم شد");
+  assert.equal(
+    (adminLog.sentence.match(/مدیر سیستم/g) || []).length,
+    1,
+    "the role label is duplicated in the sentence"
+  );
+
+  // An ordinary name still gets the role for context.
+  const studentLog = describeAuditLog({
+    action: "LOGIN",
+    details: JSON.stringify({ role: "STUDENT" }),
+    user: { firstName: "علی", lastName: "احمدی", role: "STUDENT" },
+  });
+  assert.equal(studentLog.sentence, "علی احمدی (دانش‌آموز) وارد سیستم شد");
+});
+
+test("a deleted user is named in the audit sentence, not shown as a raw id", () => {
+  const described = describeAuditLog({
+    action: "DELETE_USER",
+    details: JSON.stringify({
+      targetUserId: "6aa5564ffe531683a666ea7a",
+      targetName: "علی احمدی",
+      targetUsername: "ali1405",
+    }),
+    user: { firstName: "مدیر", lastName: "سیستم", role: "ADMIN" },
+  });
+
+  assert.match(described.sentence, /علی احمدی/);
+  assert.equal(described.sentence.includes("6aa5564f"), false);
+
+  // Rows written before the name was recorded fall back to the username.
+  const legacy = describeAuditLog({
+    action: "DELETE_USER",
+    details: JSON.stringify({ targetUserId: "6aa5564f", username: "ali1405" }),
+  });
+  assert.match(legacy.sentence, /ali1405/);
+});
+
 test("failed logins are described without a user record", () => {
   const described = describeAuditLog({
     action: "FAILED_LOGIN",
@@ -297,6 +342,72 @@ test("the audit API shape never exposes raw details", () => {
   assert.equal(entry.details, undefined);
   assert.equal(entry.ipAddress, "1.2.3.4");
   assert.equal(JSON.stringify(entry).includes("keep-out"), false);
+});
+
+test("every audit action used by an API route has a Persian description", async () => {
+  // The audit page showed raw codes like «TEST_SUBMIT» whenever a route used an
+  // action that was missing from the catalogue. This scans the API source so a
+  // new action cannot ship without a Persian sentence.
+  const { readdirSync, readFileSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const filesUnder = (dir) =>
+    readdirSync(dir).flatMap((entry) => {
+      const full = join(dir, entry);
+      return statSync(full).isDirectory() ? filesUnder(full) : [full];
+    });
+
+  const routeFiles = filesUnder("app/api").filter((file) => file.endsWith("route.js"));
+
+  const used = new Set();
+  const pattern = /createAuditLog\(\s*[^,]+,\s*"([A-Z_]+)"/g;
+
+  for (const file of routeFiles) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(pattern)) {
+      used.add(match[1]);
+    }
+  }
+
+  assert.ok(used.size > 10, `expected to find audit actions, found ${used.size}`);
+
+  const missing = [...used].filter((action) => !AUDIT_ACTIONS[action]);
+  assert.deepEqual(missing, [], `no Persian description for: ${missing.join(", ")}`);
+
+  // And the reverse direction: nothing in the catalogue is a raw code either.
+  for (const [action, definition] of Object.entries(AUDIT_ACTIONS)) {
+    assert.equal(typeof definition.label, "string", `${action} has no label`);
+    assert.ok(/[\u0600-\u06FF]/.test(definition.label), `${action} has a non-Persian label`);
+  }
+});
+
+test("student, user and ticket audit entries name the subject, not «نامشخص»", () => {
+  const rows = [
+    { action: "CREATE_STUDENT", details: { targetName: "علی احمدی", targetUsername: "ali1405" } },
+    { action: "UPDATE_STUDENT", details: { targetName: "علی احمدی" } },
+    { action: "DELETE_STUDENT", details: { targetName: "علی احمدی" } },
+    { action: "CREATE_GRADE", details: { subjectName: "ریاضی", targetName: "علی احمدی" } },
+    { action: "GUIDANCE_CALCULATED", details: { targetName: "علی احمدی" } },
+    { action: "UPDATE_USER", details: { targetName: "علی احمدی" } },
+    { action: "DELETE_USER", details: { targetName: "علی احمدی" } },
+  ];
+
+  for (const row of rows) {
+    const described = describeAuditLog({
+      ...row,
+      details: JSON.stringify(row.details),
+      user: { firstName: "مدیر", lastName: "سیستم", role: "ADMIN" },
+    });
+
+    assert.equal(described.sentence.includes("نامشخص"), false, `${row.action}: ${described.sentence}`);
+    assert.match(described.sentence, /علی احمدی/);
+  }
+
+  const grade = describeAuditLog({
+    action: "CREATE_GRADE",
+    details: JSON.stringify({ subjectName: "ریاضی", targetName: "علی احمدی" }),
+  });
+  assert.match(grade.sentence, /ریاضی/);
 });
 
 test("the filter catalogue covers every documented action", () => {

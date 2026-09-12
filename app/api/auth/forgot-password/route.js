@@ -42,7 +42,14 @@ export async function POST(request) {
 
     // Always answer the same way, whether or not the account exists.
     if (!user || !user.isActive) {
-      await createAuditLog(user?.id ?? null, "PASSWORD_RESET_REQUESTED", { found: false }, ip);
+      await createAuditLog(
+        user?.id ?? null,
+        "PASSWORD_RESET_REQUESTED",
+        // The attempted username is recorded so an administrator investigating
+        // abuse sees which account was targeted instead of «نامشخص».
+        { found: false, attemptedUsername: username },
+        ip
+      );
       return NextResponse.json({ success: true, message: GENERIC_RESPONSE });
     }
 

@@ -104,7 +104,15 @@ export async function POST(request) {
     await createAuditLog(
       auth.user.id,
       "CREATE_GRADE",
-      { studentId, gradeId: grade.id },
+      {
+        studentId,
+        gradeId: grade.id,
+        subjectName,
+        targetName: [grade.student?.user?.firstName, grade.student?.user?.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+      },
       normalizeIp(request)
     );
 

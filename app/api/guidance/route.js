@@ -53,12 +53,22 @@ export async function POST(request) {
       return NextResponse.json({ error: "شناسه دانش‌آموز الزامی است" }, { status: 400 });
     }
 
-    // Access control for counselor
-    if (auth.user.role === "COUNSELOR") {
-      const profile = await prisma.studentProfile.findUnique({ where: { id: studentId } });
-      if (!profile || profile.counselorId !== auth.user.id) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
+    // Resolved once, up front: it provides the access check, a proper 404 for an
+    // unknown id (instead of an internal error) and the name for the audit log.
+    const student = await prisma.studentProfile.findUnique({
+      where: { id: studentId },
+      include: {
+        user: { select: { firstName: true, lastName: true, username: true } },
+      },
+    });
+
+    if (!student) {
+      return NextResponse.json({ error: "دانش‌آموز یافت نشد" }, { status: 404 });
+    }
+
+    // Access control for counselor: only their own students.
+    if (auth.user.role === "COUNSELOR" && student.counselorId !== auth.user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const result = await calculateGuidanceResult(studentId);
@@ -74,7 +84,14 @@ export async function POST(request) {
     await createAuditLog(
       auth.user.id,
       "GUIDANCE_CALCULATED",
-      { studentId },
+      {
+        studentId,
+        targetName: [student.user?.firstName, student.user?.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+        targetUsername: student.user?.username,
+      },
       normalizeIp(request)
     );
 

@@ -134,12 +134,29 @@ export async function PUT(request, { params }) {
       await createAuditLog(
         auth.user.id,
         "ROLE_CHANGE",
-        { targetUserId: id, from: target.role, to: updateData.role },
+        {
+          targetUserId: id,
+          targetName: [user.firstName, user.lastName].filter(Boolean).join(" ").trim(),
+          targetUsername: user.username,
+          from: target.role,
+          // The catalogue reads `newRole`; `to` is kept for older readers.
+          newRole: updateData.role,
+          to: updateData.role,
+        },
         normalizeIp(request)
       );
     }
 
-    await createAuditLog(auth.user.id, "UPDATE_USER", { targetUserId: id }, normalizeIp(request));
+    await createAuditLog(
+      auth.user.id,
+      "UPDATE_USER",
+      {
+        targetUserId: id,
+        targetName: [user.firstName, user.lastName].filter(Boolean).join(" ").trim(),
+        targetUsername: user.username,
+      },
+      normalizeIp(request)
+    );
 
     return NextResponse.json({ user });
   } catch {
@@ -213,7 +230,14 @@ export async function DELETE(request, { params }) {
     await createAuditLog(
       auth.user.id,
       "DELETE_USER",
-      { targetUserId: id, username: user.username, role: user.role },
+      {
+        targetUserId: id,
+        // Carried into the trail so the Persian sentence can name the person
+        // instead of showing a raw identifier.
+        targetName: [user.firstName, user.lastName].filter(Boolean).join(" ").trim(),
+        targetUsername: user.username,
+        role: user.role,
+      },
       normalizeIp(request)
     );
 

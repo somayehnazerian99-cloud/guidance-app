@@ -103,7 +103,20 @@ export async function PUT(request, { params }) {
       },
     });
 
-    await createAuditLog(auth.user.id, "UPDATE_STUDENT", { studentId: id }, normalizeIp(request));
+    await createAuditLog(
+      auth.user.id,
+      "UPDATE_STUDENT",
+      {
+        studentId: id,
+        // Names (not ids) so the Persian audit sentence can identify the person.
+        targetName: [updated.user?.firstName, updated.user?.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+        targetUsername: updated.user?.username,
+      },
+      normalizeIp(request)
+    );
 
     return NextResponse.json({ student: updated });
   } catch {
@@ -120,7 +133,12 @@ export async function DELETE(request, { params }) {
 
     const { id } = await params;
 
-    const student = await prisma.studentProfile.findUnique({ where: { id } });
+    const student = await prisma.studentProfile.findUnique({
+      where: { id },
+      include: {
+        user: { select: { firstName: true, lastName: true, username: true } },
+      },
+    });
     if (!student) return NextResponse.json({ error: "دانش‌آموز یافت نشد" }, { status: 404 });
 
     // Delete test attempts and their answers
@@ -142,7 +160,20 @@ export async function DELETE(request, { params }) {
     await prisma.user.delete({ where: { id: student.userId } });
 
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    await createAuditLog(auth.user.id, "DELETE_STUDENT", { studentId: id }, ip);
+    await createAuditLog(
+      auth.user.id,
+      "DELETE_STUDENT",
+      {
+        studentId: id,
+        // Captured before the row is gone, so the audit entry keeps the name.
+        targetName: [student.user?.firstName, student.user?.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+        targetUsername: student.user?.username,
+      },
+      ip
+    );
 
     return NextResponse.json({ success: true });
   } catch {
