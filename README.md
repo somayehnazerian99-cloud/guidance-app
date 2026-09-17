@@ -74,6 +74,9 @@ npm run verify:live       # همان + یک MongoDB موقت + Seed + تست‌�
 DATABASE_URL="mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/guidance?retryWrites=true&w=majority"
 AUTH_SECRET="یک رشته تصادفی حداقل ۳۲ کاراکتری"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+CLOUDINARY_CLOUD_NAME="your_cloud_name"
+CLOUDINARY_API_KEY="your_api_key"
+CLOUDINARY_API_SECRET="your_api_secret"
 ```
 
 | متغیر | کاربرد |
@@ -81,6 +84,14 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 | `DATABASE_URL` | رشته اتصال MongoDB |
 | `AUTH_SECRET` | کلید سرور برای HMAC توکن‌های بازیابی رمز عبور. در Production **الزامی** است |
 | `NEXT_PUBLIC_APP_URL` | آدرس پایه‌ی سایت (لینک بازیابی رمز، Metadata و Canonical) |
+| `CLOUDINARY_CLOUD_NAME` | نام Cloud Name — برای آپلود عکس/صوت/ویدیو در صفحه اصلی |
+| `CLOUDINARY_API_KEY` | کلید عمومی Cloudinary |
+| `CLOUDINARY_API_SECRET` | کلید محرمانه Cloudinary. **فقط سمت سرور** استفاده می‌شود و هرگز به مرورگر نمی‌رود |
+
+> سه متغیر `CLOUDINARY_*` فقط برای بخش «مدیریت فایل‌های صفحه اصلی» لازم‌اند. اگر تنظیم
+> نشده باشند، همان صفحه پیام «اتصال فضای ذخیره‌سازی فایل هنوز تنظیم نشده است.»
+> را نشان می‌دهد و بقیه‌ی سامانه بدون مشکل کار می‌کند. برای بررسی وضعیت:
+> `GET /api/admin/diagnostics` (فقط مدیر).
 
 تولید مقدار تصادفی امن:
 
@@ -178,16 +189,38 @@ npm run env:show           # تأیید: کدام فایل خوانده می‌�
 ## ۶. Prisma
 
 ```bash
-npx prisma validate     # اعتبارسنجی Schema
-npx prisma generate     # تولید Prisma Client
-npm run seed            # پر کردن دیتابیس با داده‌های نمونه
+npx prisma validate         # اعتبارسنجی Schema
+npm run prisma:generate     # تولید Prisma Client (با گارد خطای Schema)
+npm run seed                # پر کردن دیتابیس با داده‌های نمونه
 ```
 
 > این پروژه از `prisma db push` و Migration استفاده نمی‌کند چون MongoDB بدون Schema
 > است؛ Prisma Client از `schema.prisma` ساخته می‌شود و ایندکس‌ها در سطح Application
 > تعریف شده‌اند.
 
-### مدل‌های دیتابیس (۲۲ مدل)
+### چرا `prisma:generate` یک اسکریپت جداگانه است؟
+
+`@prisma/client` در `postinstall` خودش `prisma generate` را اجرا می‌کند، اما وقتی
+Schema نامعتبر باشد خطا را می‌گیرد و `process.exit(0)` می‌کند. یعنی **نصب شکست
+نمی‌خورد، Build سبز می‌ماند و یک Prisma Client قدیمی در `node_modules` باقی می‌ماند**.
+آن‌وقت
+مدل جدید فقط لحظه‌ی درخواست غایب است و به کاربر یک خطای ۵۰۰ عمومی نشان داده می‌شود.
+
+`scripts/prisma-generate.mjs` این حالت را به زمان Build منتقل می‌کند:
+
+| وضعیت | نتیجه |
+|-------|-------|
+| Schema نامعتبر (`P1012` و مانند آن) | ❌ Build شکست می‌خورد — خطای قطعی و قابل رفع |
+| Prisma CLI نصب نیست، ولی Client تولیدشده وجود دارد | ⚠️ هشدار و ادامه |
+| Prisma CLI نصب نیست و هیچ Client ی وجود ندارد | ❌ شکست |
+| خطای محیطی، ولی Client تولیدشده موجود است | ⚠️ هشدار و ادامه |
+
+این اسکریپت هم در `postinstall` و هم در ابتدای `npm run build` اجرا می‌شود تا روی هر
+میزبانی (نتفلی، Vercel و غیره) یک Schema خراب، Deploy را متوقف کند نه Runtime را.
+همچنین `npm run db:check` یک بررسی ایستا روی فایل Schema انجام می‌دهد و مطمئن می‌شود
+هر `@id` با `@default(auto())` دارای `@db.ObjectId` است.
+
+### مدل‌های دیتابیس (۲۳ مدل)
 
 | گروه | مدل‌ها |
 |------|--------|
@@ -195,9 +228,17 @@ npm run seed            # پر کردن دیتابیس با داده‌های ن
 | سازمانی | `School`, `Class`, `CounselorProfile`, `StudentProfile` |
 | داده‌های دانش‌آموز | `Grade`, `Interest`, `Ability`, `ParentOpinion`, `Notification` |
 | آزمون‌ها | `GuidanceTest`, `Question`, `Option`, `TestAttempt`, `TestAnswer` |
-| خروجی و محتوا | `GuidanceResult`, `EducationalVideo` |
+| خروجی و محتوا | `GuidanceResult`, `EducationalVideo`, `HomeMedia` |
 | پشتیبانی | `SupportTicket`, `SupportReply` |
 | حسابرسی | `AuditLog` |
+
+`HomeMedia` فایل‌های آپلودشده‌ی صفحه اصلی (عکس/صوت/ویدیو) را نگه می‌دارد.
+`createdBy` یک ارجاع اختیاری به `User` است (`HomeMediaCreator`): فایل بدون کاربر هم
+معتبر است، پس نبودِ شناسه هیچ‌وقت باعث شکست ذخیره نمی‌شود.
+
+> ⚠️ در MongoDB، **هر** فیلد `@id` که `@default(auto())` دارد باید `@db.ObjectId`
+> داشته باشد. حذف آن باعث خطای `P1012` در `prisma generate` می‌شود. این مورد توسط
+> `npm run db:check` و `tests/media.test.mjs` بررسی و قفل شده است.
 
 فیلد `User.approvalStatus` (`PENDING` / `APPROVED` / `REJECTED`) وضعیت تأیید مشاور را
 نگه می‌دارد. حساب‌هایی که پیش از افزودن این فیلد ساخته شده‌اند و حساب‌های ساخته‌شده
@@ -390,6 +431,46 @@ guidance-app/
   حذف می‌کند و متن را محدود می‌کند؛ زمان (UTC) و IP (از `x-forwarded-for` /
   `x-real-ip`) ثبت می‌شود. `details` خام هرگز در پاسخ API برنمی‌گردد.
 
+### فایل‌های صفحه اصلی (آپلود مستقیم)
+
+صفحه `/admin/homepage` امکان آپلود مستقیم **عکس، صوت و ویدیو** را از کامپیوتر یا
+گوشی می‌دهد. فایل‌ها در Cloudinary ذخیره می‌شوند و فقط Metadata آن‌ها در مدل
+`HomeMedia` می‌ماند.
+
+| مسیر | چه کسی |
+|------|--------|
+| `/admin/homepage` | آپلود، فعال/مخفی کردن، حذف کامل |
+| `POST /api/admin/home-media/sign` | صدور امضای کوتاه‌عمر Cloudinary (فقط مدیر) |
+| `GET/POST/PATCH/DELETE /api/admin/home-media` | فهرست، ثبت، ویرایش، حذف (فقط مدیر) |
+| `GET /api/home-media` | فهرست عمومی موارد فعال (بدون `publicId`) |
+
+**مسیر سه‌مرحله‌ای آپلود:**
+
+```
+مرورگر → POST /api/admin/home-media/sign   (امضا؛ API Secret فقط سمت سرور)
+       → POST api.cloudinary.com/.../upload (فایل مستقیم به Cloudinary)
+       → POST /api/admin/home-media         (ثبت Metadata در MongoDB)
+```
+
+فایل از سرور Next عبور نمی‌کند، بنابراین محدودیت حجم بدنه‌ی توابع Serverless
+(روی نتفلی حدود ۶ مگابایت) مانع آپلود ویدیو نمی‌شود.
+
+**نکات پیاده‌سازی:**
+
+- صوت با `resourceType = "video"` امضا می‌شود، چون Cloudinary فایل صوتی را به‌عنوان
+  منبع ویدیویی ذخیره می‌کند.
+- آدرس ذخیره‌شده باید `https` باشد؛ آدرس‌های دیگر با ۴۰۰ رد می‌شوند.
+- `createdBy` یک ارجاع **اختیاری** به کاربر است و فقط وقتی نوشته می‌شود که یک
+  ObjectId معتبر باشد، پس نبود آن هیچ‌وقت باعث شکست ذخیره نمی‌شود.
+- **پاک‌سازی فایل یتیم:** اگر آپلود به Cloudinary موفق شود ولی ثبت در دیتابیس
+  شکست بخورد، همان فایل خودکار از Cloudinary حذف می‌شود (با یک بررسی امنیتی: اگر
+  رکوردی از قبل به آن `publicId` ارجاع بدهد، حذف انجام نمی‌شود).
+- **حذف مقاوم:** اگر پاک‌سازی در Cloudinary شکست بخورد، رکورد دیتابیس باز هم حذف
+  می‌شود تا فایل از صفحه اصلی پایین بیاید؛ پاسخ شامل `storageRemoved: false` است.
+- **دانلود تشخیصی:** `GET /api/admin/diagnostics` (فقط مدیر) وضعیت پیکربندی را فقط به
+  شکل Boolean و شمارنده برمی‌گرداند — بدون هیچ مقدار محیطی. با `?probe=1` یک تست
+  نوشتن/خواندن/حذف واقعی هم روی `HomeMedia` اجرا می‌شود.
+
 ---
 
 ## ۱۲. امنیت
@@ -419,7 +500,12 @@ guidance-app/
 - **Validation**: تمام بدنه‌های ورودی با Zod اعتبارسنجی می‌شوند (طول، نوع، بازه، دامنه‌ی
   مجاز لینک ویدئو، محدودیت تعداد آیتم‌ها).
 - **اطلاعات حساس**: هرگز رمز عبور، Hash، Token یا Stack Trace در پاسخ API یا Log
-  قرار نمی‌گیرد؛ پیام خطاها فارسی و عمومی است.
+  قرار نمی‌گیرد؛ پیام خطاها فارسی و عمومی است. ماژول `lib/diagnostics.js` پیش از
+  نوشتن هر خط لاگ، مقدار `DATABASE_URL`، `AUTH_SECRET`، کلیدهای Cloudinary، رمز
+  داخل Connection String و الگوهای `mongodb://` / `cloudinary://` / `Bearer` را
+  حذف می‌کند و از `error.meta` فقط کلیدهای Whitelist شده را برمی‌دارد.
+- **Endpoint تشخیصی**: `GET /api/admin/diagnostics` فقط برای ADMIN و فقط Boolean/عدد
+  برمی‌گرداند؛ برای سایر نقش‌ها ۴۰۳ است تا حتی وجود آن هم علنی نشود.
 - **کش مرورگر**: پاسخ‌های `/api/*` و صفحات پنل با `Cache-Control: no-store` ارسال می‌شوند.
 - **SEO خصوصی**: تمام صفحات پنل `noindex/nofollow` هستند و در `robots.js` مسدود شده‌اند.
 - **Security Headers**: `X-Content-Type-Options`, `X-Frame-Options: DENY`,
@@ -456,6 +542,10 @@ guidance-app/
 | فارسی، صفحه‌بندی‌شده و بدون Secret بودن خروجی لاگ فعالیت‌ها | ✅ تست HTTP |
 | جداسازی تیکت‌ها (۴۰۴ برای تیکت دیگران) و فقط-مدیر بودن حذف/تغییر وضعیت | ✅ تست HTTP |
 | جلوگیری از ارسال تکراری با Coalescing درخواست‌های یکسان | ✅ تست خودکار |
+| نامعتبر بودن Schema پریزما که Client را قدیمی باقی می‌گذارد (P1012) | ✅ `npm test` + `npm run db:check` + گارد Build |
+| عدم نشت Secret در لاگ و پاسخ تشخیصی | ✅ `npm test` + `npm run verify:auth` |
+| بسته بودن `home-media` و `diagnostics` برای ناشناس و غیرمدیر | ✅ `npm run verify:auth` |
+| پاک‌سازی فایل یتیم Cloudinary پس از شکست ثبت | ✅ `npm test` (منطق حذف و امضا) |
 | مسیرهای پنل در مرورگر واقعی (۳۰۷ بدون Session، ریدایرکت بین‌نقشی) | ✅ `npm run test:e2e` |
 | کوکی Session در مرورگر (HttpOnly + `SameSite=Lax` + خارج از دسترس جاوااسکریپت) | ✅ `npm run test:e2e` |
 | بی‌اعتبار شدن کوکی قدیمی پس از Logout (Replay حمله) | ✅ `npm run test:e2e` |
@@ -474,17 +564,19 @@ guidance-app/
 ## ۱۳. تست‌ها
 
 ```bash
-npm test            # ۶۸ تست امنیت/اعتبارسنجی/ثبت‌نام/پشتیبانی/لاگ (بدون نیاز به دیتابیس)
-npm run verify:auth # Build تولیدی روی یک پورت آزاد + بررسی‌های HTTP (۷۰ بررسی روی دیتابیس متصل)
-npm run verify:live # همان + MongoDB موقت + Seed + ۱۳ بررسی Reset
-npm run test:e2e    # ۲۵ تست انتها‌به‌انتها با Playwright روی MongoDB موقت
+npm test               # ۹۲ تست امنیت/اعتبارسنجی/ثبت‌نام/پشتیبانی/لاگ/مدیا (بدون نیاز به دیتابیس)
+npm run verify:auth    # Build تولیدی روی یک پورت آزاد + بررسی‌های HTTP (۸۰ بررسی روی دیتابیس متصل)
+npm run verify:live    # همان + MongoDB موقت + Seed
+npm run test:e2e       # ۲۷ تست انتها‌به‌انتها با Playwright روی MongoDB موقت
+npm run diagnose:media # تشخیص گام‌به‌گام مسیر ذخیره‌سازی فایل‌های صفحه اصلی
+npm run db:check       # اتصال دیتابیس + بررسی ایستای schema.prisma
 ```
 
 ### تست‌های انتها به انتها (Playwright)
 
 `npm run test:e2e` کل استک را موقت و جداگانه بالا می‌آورد: یک **MongoDB موقت
 (تک‌نودی ReplicaSet)**، `prisma db push`، `npm run seed`، Build تولیدی و یک سرور
-Next روی پورت `3100`. سپس ۲۵ سناریو در **مرورگر واقعی** اجرا می‌شود و در پایان
+Next روی پورت `3100`. سپس ۲۷ سناریو در **مرورگر واقعی** اجرا می‌شود و در پایان
 همه‌چیز (سرور و دیتابیس) متوقف و حذف می‌شود. هیچ داده‌ای به `DATABASE_URL` فایل
 `.env` دست نمی‌زند و هیچ Secret یا دیتابیس واقعی لازم نیست.
 
@@ -494,6 +586,11 @@ Next روی پورت `3100`. سپس ۲۵ سناریو در **مرورگر واق
 | `e2e/register.spec.mjs` | ثبت‌نام دانش‌آموز، پالایش نام کاربری، رمز ضعیف، نام تکراری، نبود ثبت‌نام مدیر، تأیید مشاور توسط مدیر |
 | `e2e/support.spec.mjs` | ثبت تیکت، گفت‌وگو، پاسخ و تغییر وضعیت توسط مدیر، مشاهده‌ی نتیجه توسط دانش‌آموز، عدم دسترسی دانش‌آموز دیگر |
 | `e2e/change-password.spec.mjs` | خطاهای اعتبارسنجی فرم، تغییر رمز موفق، باطل‌شدن نشست دستگاه دیگر، کارکرد رمز جدید و بی‌اعتبار شدن رمز قدیمی |
+| `e2e/media.spec.mjs` | کل زنجیره‌ی آپلود در پنل مدیر: امضا → آپلود → ثبت → انتشار در صفحه اصلی → مخفی کردن → حذف، به‌همراه تست کلیک تکراری و بررسی امضای صوت |
+
+> در `e2e/media.spec.mjs` سرویس Cloudinary در سطح شبکه با `page.route` شبیه‌سازی
+> می‌شود، بنابراین تست بدون اینترنت و بدون Credential واقعی اجرا می‌شود. امضای سمت
+> سرور واقعی است و همین بخش است که یک Schema خراب را تشخیص می‌دهد.
 
 اجرای فقط بخشی از تست‌ها (آرگومان‌ها به Playwright پاس داده می‌شوند):
 
@@ -621,9 +718,10 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 - **بخش‌های باقی‌مانده پنل مشاور**: صفحه‌های علایق، توانایی‌ها، نظر والدین، نتیجه
   هدایت و ویدئوهای پنل مشاور هنوز جداگانه ساخته نشده‌اند (داده‌ها از طریق پرونده
   دانش‌آموز و آزمون‌ها در دسترس است).
-- **آپلود فایل**: Thumbnail ویدئو و تصاویر پروفایل فعلاً فقط لینک هستند.
-- **تست مرورگر (E2E)**: تست‌های فعلی در سطح HTTP/دیتابیس هستند؛ برای پوشش کلیک‌به‌کلیک
-  رابط کاربری می‌توان Playwright اضافه کرد.
+- **آپلود فایل**: فقط بخش صفحه اصلی (عکس/صوت/ویدیو) آپلود مستقیم دارد؛ Thumbnail
+  ویدئوهای آموزشی و تصاویر پروفایل فعلاً لینک هستند.
+- **مرتب‌سازی کشیدنی**: `sortOrder` روی هر فایل ثبت و رعایت می‌شود، اما جابه‌جایی با
+  Drag & Drop در پنل هنوز پیاده نشده است.
 - **`mongodb-memory-server`** به‌عنوان devDependency فقط برای `npm run verify:live` است
   و در Production نصب/اجرا نمی‌شود.
 
@@ -640,6 +738,10 @@ Settings → Secrets and variables → Actions تنظیم کنید:
 | «حساب کاربری شما در انتظار تأیید مدیر سیستم است» | مشاور خودش ثبت‌نام کرده است؛ از `/admin/counselors` تأییدش کنید |
 | «ثبت‌نام شما توسط مدیر سیستم رد شده است» | درخواست مشاور رد شده است؛ برای بازگشت، مدیر باید حساب را تأیید کند |
 | «تیکت یافت نشد» در صفحه پشتیبانی | تیکت متعلق به حساب دیگری است (یا حذف شده است)؛ هر کاربر فقط تیکت‌های خودش را می‌بیند |
+| **«ذخیره فایل در سامانه انجام نشد.» در `/admin/homepage`** | `npm run diagnose:media` و `npm run db:check` را اجرا کنید. رایج‌ترین علت، **Schema نامعتبر** است (`@db.ObjectId` جاافتاده) که `prisma generate` را بی‌صدا شکست می‌دهد و یک Prisma Client قدیمی بدون مدل `HomeMedia` باقی می‌گذارد. با `npx prisma validate` و سپس `npm run prisma:generate` رفع می‌شود |
+| آپلود کار می‌کند ولی فایل در صفحه اصلی دیده نمی‌شود | وضعیت «نمایش/مخفی» را بررسی کنید؛ فقط موارد `isActive` در `GET /api/home-media` برمی‌گردند |
+| «اتصال فضای ذخیره‌سازی فایل هنوز تنظیم نشده است.» | `CLOUDINARY_CLOUD_NAME`، `CLOUDINARY_API_KEY` و `CLOUDINARY_API_SECRET` را تنظیم کنید و سرور را دوباره اجرا کنید (متغیرها در زمان اجرا خوانده می‌شوند) |
+| فایل آپلود می‌شود ولی در Cloudinary باقی می‌ماند | اگر ثبت در دیتابیس شکست بخورد، فایل خودکار حذف می‌شود. پیام همراه خطا (`cleanup`) نشان می‌دهد که پاک‌سازی انجام شده یا نه |
 | بعد از تغییر رمز، دستگاه دیگر خارج شده است | رفتار عمدی: با تغییر رمز، Sessionهای قبلی باطل می‌شوند |
 | فونت فارسی بارگذاری نمی‌شود | `next/font` در زمان Build فونت را می‌گیرد؛ Build را با دسترسی شبکه اجرا کنید |
 | لاگین در CI کار نمی‌کند | Secretهای `DATABASE_URL` و `AUTH_SECRET` را تنظیم کنید |

@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build --debug",
+    "postinstall": "node scripts/prisma-generate.mjs --quiet",
+    "prisma:generate": "node scripts/prisma-generate.mjs",
+    "build": "node scripts/prisma-generate.mjs --quiet && next build --debug",
     "start": "next start",
     "lint": "eslint",
     "test": "node --test \"tests/**/*.test.mjs\"",
@@ -14,6 +16,7 @@
     "env:show": "node scripts/show-env.mjs",
     "env:set": "node scripts/set-db-url.mjs",
     "db:check": "node scripts/check-db.mjs",
+    "diagnose:media": "node scripts/diagnose-home-media.mjs",
     "mongo:start": "node scripts/local-mongo.mjs start",
     "mongo:stop": "node scripts/local-mongo.mjs stop",
     "mongo:status": "node scripts/local-mongo.mjs status",

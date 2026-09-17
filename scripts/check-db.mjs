@@ -18,6 +18,8 @@
 
 import { databaseNameIn, findEnvValue, maskSecret } from "./lib/env.mjs";
 import { MongoClient } from "mongodb";
+import fs from "node:fs";
+import path from "node:path";
 
 const ROOT = process.cwd();
 
@@ -26,6 +28,7 @@ const EXPECTED_COLLECTIONS = [
   "Grade", "Interest", "Ability", "GuidanceTest", "Question", "Option",
   "TestAttempt", "TestAnswer", "ParentOpinion", "GuidanceResult",
   "EducationalVideo", "Notification", "AuditLog", "PasswordResetToken",
+  "SupportTicket", "SupportReply", "HomeMedia",
 ];
 
 const configured = findEnvValue("DATABASE_URL", ROOT);
@@ -100,6 +103,60 @@ async function diagnose(error, connectionString) {
 
   hints.push("Run `npm run env:show` to confirm which file DATABASE_URL is read from.");
   return hints;
+}
+
+/**
+ * Static check of prisma/schema.prisma.
+ *
+ * A single missing `@db.ObjectId` on an `@id` field makes `prisma generate`
+ * fail with P1012. The build still succeeds on a host that caches node_modules,
+ * but the deployed server then runs a Prisma Client without the new models —
+ * which surfaces much later as "Cannot read properties of undefined" at request
+ * time. Catching it here turns a mystery 500 into a one-line fix.
+ */
+function checkSchemaFile() {
+  const schemaPath = path.join(ROOT, "prisma", "schema.prisma");
+  if (!fs.existsSync(schemaPath)) {
+    fail("prisma/schema.prisma exists");
+    return;
+  }
+
+  const source = fs.readFileSync(schemaPath, "utf8");
+  const lines = source.split("\n");
+
+  const idWithoutObjectId = [];
+  const models = [];
+
+  lines.forEach((line, index) => {
+    const modelMatch = line.match(/^model\s+(\w+)\s*\{/);
+    if (modelMatch) models.push(modelMatch[1]);
+
+    // Only an `@id` that uses @default(auto()) requires the native type.
+    if (/@id\b/.test(line) && /@default\(auto\(\)\)/.test(line) && !/@db\.ObjectId/.test(line)) {
+      idWithoutObjectId.push(`${index + 1}: ${line.trim()}`);
+    }
+  });
+
+  if (idWithoutObjectId.length === 0) {
+    ok("every @id with @default(auto()) declares @db.ObjectId", `${models.length} model(s)`);
+  } else {
+    fail(
+      "every @id with @default(auto()) declares @db.ObjectId",
+      `${idWithoutObjectId.length} field(s) missing it — \`prisma generate\` will fail with P1012`
+    );
+    for (const entry of idWithoutObjectId) console.log(`     ${entry}`);
+    note("MongoDB models need:  id String @id @default(auto()) @map(\"_id\") @db.ObjectId");
+  }
+
+  const notListed = models.filter((name) => !EXPECTED_COLLECTIONS.includes(name));
+  if (notListed.length === 0) {
+    ok("every model is covered by this check");
+  } else {
+    fail(
+      "every model is covered by this check",
+      `${notListed.join(", ")} missing from EXPECTED_COLLECTIONS in scripts/check-db.mjs`
+    );
+  }
 }
 
 /** Checks that only make sense once we know which database we are talking about. */
@@ -178,6 +235,8 @@ async function main() {
     );
     console.log("");
   }
+
+  checkSchemaFile();
 
   try {
     // The constructor parses the URI and throws on unescaped characters, so it

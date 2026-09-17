@@ -91,6 +91,14 @@ async function main() {
     DATABASE_URL: uri,
     AUTH_SECRET: process.env.AUTH_SECRET || "e2e-secret-that-is-at-least-32-characters-long",
     NEXT_PUBLIC_APP_URL: BASE_URL,
+    // Placeholder Cloudinary credentials so the signing endpoint can be
+    // exercised. They are never used against the real service: the browser's
+    // upload request is intercepted by the media spec, so nothing leaves the
+    // machine. Without these the signing endpoint correctly answers 503 and the
+    // upload chain cannot be tested at all.
+    CLOUDINARY_CLOUD_NAME: process.env.E2E_CLOUDINARY_CLOUD_NAME || "e2e-cloud",
+    CLOUDINARY_API_KEY: process.env.E2E_CLOUDINARY_API_KEY || "000000000000000",
+    CLOUDINARY_API_SECRET: process.env.E2E_CLOUDINARY_API_SECRET || "e2e-cloudinary-secret",
   };
 
   let server = null;

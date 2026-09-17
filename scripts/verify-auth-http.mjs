@@ -236,6 +236,187 @@ async function runLiveChecks(base) {
     return "401";
   });
 
+  // --- Homepage media (the chain that used to fail with a generic 500) ----
+  //
+  // The regression this guards: a single missing `@db.ObjectId` in
+  // schema.prisma made `prisma generate` fail, so the deployed server ran a
+  // Prisma Client without the `homeMedia` delegate and every query threw a
+  // TypeError — reported to the admin only as "ذخیره فایل در سامانه انجام نشد".
+  //
+  // A real file is never uploaded here; the checks exercise the persistence
+  // half of the chain, which is where the failure actually happened.
+
+  const mediaPayload = {
+    title: `verify-media-${Date.now()}`,
+    description: "created by verify-auth-http",
+    type: "IMAGE",
+    url: "https://res.cloudinary.com/demo/image/upload/sample.jpg",
+    publicId: "guidance-app/homepage/images/verify-sample",
+    resourceType: "image",
+    mimeType: "image/png",
+    bytes: 2048,
+  };
+
+  let createdMediaId = null;
+
+  await check("admin can save homepage media metadata (the exact panel request)", async () => {
+    const res = await fetch(`${base}/api/admin/home-media`, as(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify(mediaPayload),
+    }));
+
+    const data = await res.json().catch(() => ({}));
+
+    // 503 is the explicit signal for a stale generated Prisma Client.
+    assert(res.status !== 503, `the Prisma Client is out of date: ${data.error}`);
+    assert(res.status === 201, `expected 201, got ${res.status} (${data.error || "no message"})`);
+    assert(data.item?.id, "the created item has no id");
+    assert(data.item.sortOrder >= 0, "sortOrder was not assigned");
+
+    createdMediaId = data.item.id;
+    return `201, sortOrder ${data.item.sortOrder}`;
+  });
+
+  await check("a saved media row is linked to its admin creator", async () => {
+    assert(createdMediaId, "no media row was created");
+    const res = await fetch(`${base}/api/admin/home-media`, as(admin.cookie));
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const data = await res.json();
+
+    const item = (data.items || []).find((entry) => entry.id === createdMediaId);
+    assert(item, "the created row is missing from the list");
+    assert(item.createdBy === admin.body.user.id, "createdBy does not point at the signed-in admin");
+    return `createdBy = ${String(item.createdBy).slice(-6)}`;
+  });
+
+  await check("media metadata is rejected when incomplete", async () => {
+    const res = await fetch(`${base}/api/admin/home-media`, as(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify({ ...mediaPayload, publicId: "" }),
+    }));
+    assert(res.status === 400, `expected 400, got ${res.status}`);
+    return "400";
+  });
+
+  await check("media metadata rejects a non-https url", async () => {
+    const res = await fetch(`${base}/api/admin/home-media`, as(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify({ ...mediaPayload, url: "javascript:alert(1)" }),
+    }));
+    assert(res.status === 400, `expected 400, got ${res.status}`);
+    return "400";
+  });
+
+  await check("a saved media row becomes visible on the public homepage", async () => {
+    assert(createdMediaId, "no media row was created");
+    const res = await fetch(`${base}/api/home-media`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const data = await res.json();
+    assert(
+      (data.items || []).some((entry) => entry.id === createdMediaId),
+      "the active item is not published to the public endpoint"
+    );
+    assert(!JSON.stringify(data).includes("publicId"), "the public endpoint leaks internal storage ids");
+    return `200, ${data.items.length} published item(s)`;
+  });
+
+  await check("the public endpoint never exposes inactive media", async () => {
+    assert(createdMediaId, "no media row was created");
+
+    const hide = await fetch(`${base}/api/admin/home-media`, as(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify({ id: createdMediaId, isActive: false }),
+    }));
+    assert(hide.status === 200, `expected 200 from PATCH, got ${hide.status}`);
+
+    const res = await fetch(`${base}/api/home-media`);
+    const data = await res.json();
+    assert(
+      !(data.items || []).some((entry) => entry.id === createdMediaId),
+      "a hidden item is still published publicly"
+    );
+    return "hidden item is not published";
+  });
+
+  await check("media endpoints refuse anonymous callers", async () => {
+    const list = await fetch(`${base}/api/admin/home-media`, { redirect: "manual" });
+    assert(list.status === 403 || list.status === 401, `expected 401/403, got ${list.status}`);
+
+    const create = await fetch(`${base}/api/admin/home-media`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify(mediaPayload),
+    });
+    assert(create.status === 403 || create.status === 401, `expected 401/403, got ${create.status}`);
+    return `${list.status}/${create.status}`;
+  });
+
+  await check("deleting media removes the row even when storage is unreachable", async () => {
+    assert(createdMediaId, "no media row was created");
+
+    const res = await fetch(`${base}/api/admin/home-media?id=${encodeURIComponent(createdMediaId)}`, as(admin.cookie, {
+      method: "DELETE",
+      headers: { Origin: base },
+    }));
+    const data = await res.json().catch(() => ({}));
+
+    // A storage failure must not leave an item stuck on the homepage.
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+
+    const list = await fetch(`${base}/api/admin/home-media`, as(admin.cookie));
+    const listed = await list.json();
+    assert(
+      !(listed.items || []).some((entry) => entry.id === createdMediaId),
+      "the deleted row is still listed"
+    );
+
+    createdMediaId = null;
+    return `200, storageRemoved=${data.storageRemoved}`;
+  });
+
+  await check("the diagnostics endpoint reports readiness without leaking secrets", async () => {
+    const res = await fetch(`${base}/api/admin/diagnostics?probe=1`, as(admin.cookie));
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+
+    const data = await res.json();
+    const serialized = JSON.stringify(data);
+
+    // Never echo a configured value, whatever it is.
+    for (const key of ["DATABASE_URL", "AUTH_SECRET", "CLOUDINARY_API_SECRET", "CLOUDINARY_API_KEY"]) {
+      const value = process.env[key];
+      assert(!value || !serialized.includes(value), `the diagnostics response leaked ${key}`);
+    }
+    assert(!/mongodb(\+srv)?:\/\//.test(serialized), "the response contains a connection string");
+    assert(!/\$2[aby]\$/.test(serialized), "the response contains a bcrypt hash");
+
+    assert(data.summary?.prismaClientComplete === true, "the Prisma Client is incomplete");
+    assert(data.summary?.databaseConfigured === true, "DATABASE_URL is not visible to the server");
+    assert(data.summary?.authenticated === true, "the endpoint lost the session");
+    assert(data.summary?.role === "ADMIN", "the reported role is wrong");
+    assert(data.probe?.created === true, "the write probe could not create a row");
+    assert(data.probe?.readBack === true, "the write probe could not read the row back");
+    assert(data.probe?.cleanedUp === true, "the write probe left a row behind");
+
+    // `ok` must summarise the checks it returns, so the flag can be trusted.
+    const derivedOk = (data.checks || []).every((entry) => entry.ok);
+    assert(data.ok === derivedOk, "the overall status contradicts the individual checks");
+
+    // Every database-backed check must pass regardless of where this runs. The
+    // Cloudinary flag is environment-dependent and is reported, not asserted
+    // (these checks never upload a real file).
+    for (const entry of data.checks || []) {
+      if (entry.key === "cloudinaryConfigured") continue;
+      assert(entry.ok, `diagnostic check failed: ${entry.key} (${entry.detail})`);
+    }
+
+    return `prismaClientComplete=true, write probe ok, cloudinaryConfigured=${data.summary.cloudinaryConfigured}`;
+  });
+
   // --- Student ------------------------------------------------------------
   const student = await login(base, { ...CREDENTIALS.student, role: "STUDENT" });
 
@@ -251,6 +432,35 @@ async function runLiveChecks(base) {
     assert(res.status === 302 || res.status === 307, `expected a redirect, got ${res.status}`);
     assert(location.endsWith("/student"), `redirected to ${location}`);
     return `-> ${location}`;
+  });
+
+  await check("the media and diagnostics APIs are closed to non-admins", async () => {
+    // The diagnostics endpoint reports configuration state, so a student must
+    // not even learn whether it exists.
+    const endpoints = ["/api/admin/home-media", "/api/admin/diagnostics"];
+
+    for (const endpoint of endpoints) {
+      const read = await fetch(`${base}${endpoint}`, as(student.cookie));
+      assert(read.status === 403, `${endpoint} returned ${read.status} for a student, expected 403`);
+
+      const anonymous = await fetch(`${base}${endpoint}`, { redirect: "manual" });
+      assert(
+        anonymous.status === 401 || anonymous.status === 403,
+        `${endpoint} returned ${anonymous.status} anonymously, expected 401/403`
+      );
+    }
+
+    const sign = await fetch(
+      `${base}/api/admin/home-media/sign`,
+      as(student.cookie, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: base },
+        body: JSON.stringify({ type: "IMAGE" }),
+      })
+    );
+    assert(sign.status === 403, `the signing endpoint returned ${sign.status} for a student, expected 403`);
+
+    return `${endpoints.length} endpoints + signing, all 403`;
   });
 
   await check("student gets 403 from admin-only APIs", async () => {
