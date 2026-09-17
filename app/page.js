@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { GraduationCap, Presentation } from "lucide-react";
+import { GraduationCap, Presentation, PlayCircle, ShieldCheck } from "lucide-react";
 
 export const metadata = {
   title: "سیستم هدایت تحصیلی",
@@ -7,70 +7,111 @@ export const metadata = {
   robots: { index: true, follow: true },
 };
 
+const INTRO_VIDEO_URL =
+  "https://www.picofile.com/f/pMzB7cBxj0/InShot-20260914-125859871.mp4";
+
 export default function HomePage() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 p-4">
-      <div className="w-full max-w-2xl space-y-8">
-        {/* Logo & Title */}
-        <div className="text-center space-y-4">
-          <div className="flex justify-center">
-            <div className="h-20 w-20 rounded-2xl bg-primary flex items-center justify-center shadow-lg">
-              <span className="text-primary-foreground text-3xl font-bold">🎓</span>
-            </div>
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-100 px-4 py-8 dark:from-gray-950 dark:via-gray-900 dark:to-indigo-950">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+        {/* Header */}
+        <section className="text-center">
+          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-primary text-4xl shadow-xl ring-8 ring-primary/10">
+            🎓
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-foreground">
+          <h1 className="text-3xl font-black tracking-tight text-foreground md:text-5xl">
             سیستم هدایت تحصیلی
           </h1>
-          <p className="text-muted-foreground text-lg">
-            سیستم جامع هدایت تحصیلی دانش‌آموزان متوسطه اول
+          <p className="mx-auto mt-3 max-w-2xl text-base leading-7 text-muted-foreground md:text-lg">
+            سامانه جامع هدایت تحصیلی دانش‌آموزان متوسطه اول
           </p>
-        </div>
+        </section>
 
-        {/* Login Cards */}
-        <div className="grid gap-4 md:grid-cols-3">
-          {/* Admin */}
-          <Link href="/login/admin" className="group">
-            <div className="rounded-xl border bg-card p-6 text-center shadow-sm transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">
-              <div className="mx-auto h-14 w-14 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-3">
-                <span className="text-2xl">🛡️</span>
+        {/* Introduction video */}
+        <section className="overflow-hidden rounded-3xl border bg-card shadow-xl">
+          <div className="border-b bg-primary/5 px-5 py-4 md:px-7">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <PlayCircle className="h-6 w-6" />
               </div>
-              <h3 className="font-semibold text-lg mb-1">مدیریت</h3>
-              <p className="text-sm text-muted-foreground">ورود مدیر سیستم</p>
-            </div>
-          </Link>
-
-          {/* Counselor */}
-          <Link href="/login/counselor" className="group">
-            <div className="rounded-xl border bg-card p-6 text-center shadow-sm transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">
-              <div className="mx-auto h-14 w-14 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-3">
-                <span className="text-2xl">👨‍🏫</span>
+              <div>
+                <h2 className="text-lg font-bold md:text-xl">معرفی سامانه</h2>
+                <p className="text-sm text-muted-foreground">
+                  برای آشنایی با سامانه، ویدیوی معرفی را مشاهده کنید.
+                </p>
               </div>
-              <h3 className="font-semibold text-lg mb-1">مشاوره</h3>
-              <p className="text-sm text-muted-foreground">ورود مشاور</p>
             </div>
-          </Link>
+          </div>
 
-          {/* Student */}
-          <Link href="/login/student" className="group">
-            <div className="rounded-xl border bg-card p-6 text-center shadow-sm transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">
-              <div className="mx-auto h-14 w-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mb-3">
-                <span className="text-2xl">📚</span>
+          <div className="bg-black p-0">
+            <video
+              className="mx-auto aspect-video w-full max-h-[620px] object-contain"
+              controls
+              playsInline
+              preload="metadata"
+              src={INTRO_VIDEO_URL}
+            >
+              مرورگر شما از پخش ویدیو پشتیبانی نمی‌کند.
+              <a href={INTRO_VIDEO_URL}>مشاهده مستقیم ویدیو</a>
+            </video>
+          </div>
+        </section>
+
+        {/* Login cards */}
+        <section>
+          <div className="mb-4 text-center">
+            <h2 className="text-xl font-bold md:text-2xl">ورود به سامانه</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              نقش کاربری خود را انتخاب کنید.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <Link href="/login/admin" className="group">
+              <div className="h-full rounded-2xl border bg-card p-6 text-center shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-100 text-2xl dark:bg-red-900/30">
+                  🛡️
+                </div>
+                <h3 className="text-lg font-bold">مدیریت</h3>
+                <p className="mt-1 text-sm text-muted-foreground">ورود مدیر سیستم</p>
               </div>
-              <h3 className="font-semibold text-lg mb-1">دانش‌آموز</h3>
-              <p className="text-sm text-muted-foreground">ورود دانش‌آموز</p>
+            </Link>
+
+            <Link href="/login/counselor" className="group">
+              <div className="h-full rounded-2xl border bg-card p-6 text-center shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-100 text-2xl dark:bg-blue-900/30">
+                  👨‍🏫
+                </div>
+                <h3 className="text-lg font-bold">مشاوره</h3>
+                <p className="mt-1 text-sm text-muted-foreground">ورود مشاور</p>
+              </div>
+            </Link>
+
+            <Link href="/login/student" className="group">
+              <div className="h-full rounded-2xl border bg-card p-6 text-center shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-green-100 text-2xl dark:bg-green-900/30">
+                  📚
+                </div>
+                <h3 className="text-lg font-bold">دانش‌آموز</h3>
+                <p className="mt-1 text-sm text-muted-foreground">ورود دانش‌آموز</p>
+              </div>
+            </Link>
+          </div>
+        </section>
+
+        {/* Registration */}
+        <section className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur md:p-8">
+          <div className="flex flex-col items-center text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <ShieldCheck className="h-6 w-6" />
             </div>
-          </Link>
-        </div>
+            <h2 className="text-lg font-bold">حساب کاربری ندارید؟</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+              دانش‌آموزان می‌توانند ثبت‌نام کنند و ثبت‌نام مشاوران پس از تأیید مدیر سیستم فعال می‌شود.
+            </p>
+          </div>
 
-        {/* Sign-up call to action */}
-        <div className="rounded-2xl border bg-card/70 p-6 shadow-sm backdrop-blur">
-          <h2 className="text-center text-lg font-semibold">حساب کاربری ندارید؟</h2>
-          <p className="mt-1 text-center text-sm text-muted-foreground">
-            دانش‌آموزان می‌توانند بلافاصله ثبت‌نام کنند؛ ثبت‌نام مشاوران پس از تأیید مدیر سیستم
-            فعال می‌شود.
-          </p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="mx-auto mt-5 grid max-w-2xl gap-3 sm:grid-cols-2">
             <Link
               href="/register/student"
               className="flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
@@ -87,19 +128,18 @@ export default function HomePage() {
             </Link>
           </div>
 
-          <p className="mt-4 text-center text-xs text-muted-foreground">
+          <p className="mt-5 text-center text-xs text-muted-foreground">
             ثبت‌نام مدیر سیستم به‌صورت عمومی امکان‌پذیر نیست. رمز عبور خود را فراموش کرده‌اید؟{" "}
             <Link href="/forgot-password" className="font-medium text-primary hover:underline">
               بازیابی رمز عبور
             </Link>
           </p>
-        </div>
+        </section>
 
-        {/* Footer */}
-        <p className="text-center text-sm text-muted-foreground">
+        <footer className="pb-4 text-center text-sm text-muted-foreground">
           © {new Date().getFullYear()} سیستم هدایت تحصیلی - تمامی حقوق محفوظ است
-        </p>
+        </footer>
       </div>
-    </div>
+    </main>
   );
 }
