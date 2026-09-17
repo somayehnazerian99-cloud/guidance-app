@@ -30,6 +30,10 @@ export async function POST(request) {
     }
 
     const last = await prisma.homeMedia.findFirst({ orderBy: { sortOrder: "desc" } });
+    const creatorId = typeof auth.user.id === "string" && /^[a-f0-9]{24}$/i.test(auth.user.id)
+      ? auth.user.id
+      : null;
+
     const item = await prisma.homeMedia.create({
       data: {
         title: title.trim(),
@@ -41,12 +45,13 @@ export async function POST(request) {
         mimeType: mimeType || null,
         bytes: Number.isFinite(bytes) ? Math.max(0, Math.round(bytes)) : null,
         sortOrder: (last?.sortOrder ?? -1) + 1,
-        createdBy: auth.user.id,
+        ...(creatorId ? { createdBy: creatorId } : {}),
       },
     });
 
     return NextResponse.json({ item }, { status: 201 });
-  } catch {
+  } catch (error) {
+    console.error("[home-media] Failed to save uploaded media:", error);
     return NextResponse.json({ error: "ذخیره فایل در سامانه انجام نشد." }, { status: 500 });
   }
 }
@@ -70,7 +75,8 @@ export async function PATCH(request) {
       },
     });
     return NextResponse.json({ item });
-  } catch {
+  } catch (error) {
+    console.error("[home-media] Failed to update media:", error);
     return NextResponse.json({ error: "ویرایش فایل انجام نشد." }, { status: 500 });
   }
 }
@@ -90,7 +96,8 @@ export async function DELETE(request) {
     await prisma.homeMedia.delete({ where: { id } });
 
     return NextResponse.json({ success: true });
-  } catch {
+  } catch (error) {
+    console.error("[home-media] Failed to delete media:", error);
     return NextResponse.json({ error: "حذف فایل انجام نشد. اتصال فضای ذخیره‌سازی را بررسی کنید." }, { status: 500 });
   }
 }
