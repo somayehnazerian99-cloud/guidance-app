@@ -39,6 +39,7 @@ function applySecurityHeaders(response, isProduction) {
       "img-src 'self' data: https:",
       "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self'",
+      "media-src 'self' https://www.picofile.com https://picofile.com",
       "frame-src https://www.youtube.com https://www.aparat.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
